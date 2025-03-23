@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
- 	"github.com/OpenTollgate/tollgate-module-basic-go/modules"
 
 )
 
