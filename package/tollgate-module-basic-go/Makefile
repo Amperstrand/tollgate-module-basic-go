@@ -73,7 +73,7 @@ define Build/Compile
 	cd $(PKG_BUILD_DIR) && \
 	GOOS=linux \
 	GOARCH=arm64 \
-	go build -o tollgate-basic -trimpath -ldflags="-s -w" main.go
+	go build -o tollgate-basic -trimpath -ldflags="-s -w"
 
 	# Verify the binary type
 	file $(PKG_BUILD_DIR)/tollgate-basic
