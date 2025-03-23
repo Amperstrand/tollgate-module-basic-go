@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
-
+	"github.com/OpenTollgate/tollgate-module-basic-go/src/modules"
 )
 
 // Private key for signing the nostr event (in hex format)
