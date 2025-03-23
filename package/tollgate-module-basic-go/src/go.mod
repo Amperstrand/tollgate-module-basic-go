@@ -1,4 +1,4 @@
-module github.com/OpenTollgate/tip01
+module github.com/OpenTollgate/basic
 
 go 1.23.3
 
