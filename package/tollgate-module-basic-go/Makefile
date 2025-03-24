@@ -9,7 +9,7 @@ ifneq ($(TOPDIR),)
 	# Feed-specific settings (auto-clone from git)
 	PKG_SOURCE_PROTO:=git
 	PKG_SOURCE_URL:=https://github.com/OpenTollGate/tollgate-module-basic-go.git
-	PKG_SOURCE_VERSION:=build_sdk
+	PKG_SOURCE_VERSION:=build_sdk # TODO: Change to main
 	PKG_MIRROR_HASH:=skip
 else
 	# SDK build context (local files)
