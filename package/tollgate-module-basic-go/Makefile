@@ -83,7 +83,7 @@ endef
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tollgate-basic $(1)/usr/bin/tollgate-basic
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/$(PKG_NAME) $(1)/usr/bin/tollgate-basic
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
