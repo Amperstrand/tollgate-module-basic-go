@@ -9,7 +9,7 @@ ifneq ($(TOPDIR),)
 	# Feed-specific settings (auto-clone from git)
 	PKG_SOURCE_PROTO:=git
 	PKG_SOURCE_URL:=https://github.com/OpenTollGate/tollgate-module-basic-go.git
-	PKG_SOURCE_VERSION:=build_sdk # TODO: Change to main
+	PKG_SOURCE_VERSION:=$(shell git rev-parse HEAD) # Use exact current commit
 	PKG_MIRROR_HASH:=skip
 else
 	# SDK build context (local files)
@@ -42,52 +42,43 @@ define Package/$(PKG_NAME)/description
 endef
 
 define Build/Prepare
-	# First call the default prepare to handle git source fetching
 	$(call Build/Prepare/Default)
-
-	# Debug: check what's in the build directory after default prepare
-	@echo "Contents of PKG_BUILD_DIR after default prepare:"
-	@ls -la $(PKG_BUILD_DIR) || echo "Directory empty or doesn't exist"
-
-	# Clean up Go module cache if needed
-	cd $(PKG_BUILD_DIR) && \
-	rm -f go.mod go.sum && \
-	go mod init tollgate-module-basic-go && \
-	go mod edit -replace github.com/OpenTollgate/basic=./ && \
-	go mod edit -replace github.com/bytedance/sonic=github.com/bytedance/sonic@v1.12.10 && \
-	go mod edit -require github.com/bytedance/sonic@v1.12.10 && \
-	go mod tidy && \
-	go get github.com/fiatjaf/khatru && \
-	go get github.com/nbd-wtf/go-nostr && \
-	go list -m github.com/bytedance/sonic
+	echo "DEBUG: Contents of go.mod after prepare:"
+	cat $(PKG_BUILD_DIR)/go.mod
 endef
 
 define Build/Configure
 endef
 
+# define Build/Compile
+# 	mkdir -p "$(PKG_BUILD_DIR)/.go_work/build/src/github.com/OpenTollGate"
+# 	ln -sf "$(PKG_BUILD_DIR)" "$(PKG_BUILD_DIR)/.go_work/build/src/github.com/OpenTollGate/tollgate-module-basic-go"
+
+# 	# Simplify the Go build process to match the working command
+# 	cd $(PKG_BUILD_DIR) && \
+# 	GOOS=linux \
+# 	GOARCH=arm64 \
+# 	go build -o tollgate-basic -trimpath -ldflags="-s -w"
+
+# 	# Verify the binary type
+# 	file $(PKG_BUILD_DIR)/tollgate-basic
+
+# 	@if [ ! -f "$(PKG_BUILD_DIR)/tollgate-basic" ]; then \
+# 		echo "\n!!! NO BINARY CREATED - BUILD FAILED !!!"; \
+# 		echo "Build artifacts:" ; \
+# 		ls -la $(PKG_BUILD_DIR) ; \
+# 		exit 1; \
+# 	fi
+
+# 	# Create symlink to binary in expected location for install phase
+# 	mkdir -p $(PKG_BUILD_DIR)/.go_work/build/bin
+# 	ln -sf $(PKG_BUILD_DIR)/tollgate-basic $(PKG_BUILD_DIR)/.go_work/build/bin/tollgate-basic
+# endef
+
 define Build/Compile
-	mkdir -p "$(PKG_BUILD_DIR)/.go_work/build/src/github.com/OpenTollGate"
-	ln -sf "$(PKG_BUILD_DIR)" "$(PKG_BUILD_DIR)/.go_work/build/src/github.com/OpenTollGate/tollgate-module-basic-go"
-
-	# Simplify the Go build process to match the working command
 	cd $(PKG_BUILD_DIR) && \
-	GOOS=linux \
-	GOARCH=arm64 \
-	go build -o tollgate-basic -trimpath -ldflags="-s -w"
-
-	# Verify the binary type
-	file $(PKG_BUILD_DIR)/tollgate-basic
-
-	@if [ ! -f "$(PKG_BUILD_DIR)/tollgate-basic" ]; then \
-		echo "\n!!! NO BINARY CREATED - BUILD FAILED !!!"; \
-		echo "Build artifacts:" ; \
-		ls -la $(PKG_BUILD_DIR) ; \
-		exit 1; \
-	fi
-
-	# Create symlink to binary in expected location for install phase
-	mkdir -p $(PKG_BUILD_DIR)/.go_work/build/bin
-	ln -sf $(PKG_BUILD_DIR)/tollgate-basic $(PKG_BUILD_DIR)/.go_work/build/bin/tollgate-basic
+	GOOS=linux GOARCH=arm64 \
+	go build -o $(PKG_NAME) -trimpath -ldflags="-s -w" 
 endef
 
 define Package/$(PKG_NAME)/install
