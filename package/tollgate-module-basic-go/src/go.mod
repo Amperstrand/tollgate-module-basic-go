@@ -1,4 +1,4 @@
-module github.com/OpenTollgate/tollgate-module-basic-go
+module github.com/OpenTollgate/tollgate-module-basic-go/src
 
 go 1.23.3
 
