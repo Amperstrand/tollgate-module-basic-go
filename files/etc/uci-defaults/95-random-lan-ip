@@ -56,14 +56,14 @@ else
     echo "$RANDOM_IP status.client" >> /etc/hosts
 fi
 
-# Opennds config check and update (only if installed)
-if [ -f "/etc/config/opennds" ]; then
-    if uci -q get opennds.@opennds[0] >/dev/null; then
+# NoDogSplash config check and update (only if installed)
+if [ -f "/etc/config/nodogsplash" ]; then
+    if uci -q get nodogsplash.@nodogsplash[0] >/dev/null; then
         # statuspath is typically a URI path, not an IP
         # If you need to set it to a full URL:
-        # uci set opennds.@opennds[0].statuspath="http://$RANDOM_IP/status"
-        # uci commit opennds
-        echo "OpenNDS detected, would update its config if needed"
+        # uci set nodogsplash.@nodogsplash[0].statuspath="http://$RANDOM_IP/status"
+        # uci commit nodogsplash
+        echo "NoDogSplash detected, would update its config if needed"
     fi
 fi
 
@@ -80,6 +80,6 @@ uci set network.lan.broadcast="$BROADCAST"
 
 # Schedule network restart (safer than immediate restart during boot)
 (sleep 5 && /etc/init.d/network restart && 
- [ -f "/etc/init.d/opennds" ] && /etc/init.d/opennds restart) &
+ [ -f "/etc/init.d/nodogsplash" ] && /etc/init.d/nodogsplash restart) &
 
 exit 0
