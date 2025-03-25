@@ -61,7 +61,39 @@ endef
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/$(PKG_NAME) $(1)/usr/bin/tollgate-basic
+	
+	# Init scripts
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/etc/init.d/tollgate-basic $(1)/etc/init.d/
+	
+	# Config files
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DATA) ./files/etc/config/firewall $(1)/etc/config/
+	$(INSTALL_DATA) ./files/etc/config/firewall-tollgate $(1)/etc/config/
+	$(INSTALL_DATA) ./files/etc/config/uhttpd $(1)/etc/config/
+	
+	# System files
+	$(INSTALL_DIR) $(1)/etc/modt
+	$(INSTALL_DATA) ./files/etc/modt/* $(1)/etc/modt/
+	
+	$(INSTALL_DIR) $(1)/etc
+	$(INSTALL_DATA) ./files/etc/profile $(1)/etc/
+	
+	# First-login setup
+	$(INSTALL_DIR) $(1)/usr/local/bin
+	$(INSTALL_BIN) ./files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
 endef
+
+# Add all files to package manifest
+FILES_$(PKG_NAME) += \
+	/usr/bin/tollgate-basic \
+	/etc/init.d/tollgate-basic \
+	/etc/config/firewall \
+	/etc/config/firewall-tollgate \
+	/etc/config/uhttpd \
+	/etc/modt/* \
+	/etc/profile \
+	/usr/local/bin/first-login-setup
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
