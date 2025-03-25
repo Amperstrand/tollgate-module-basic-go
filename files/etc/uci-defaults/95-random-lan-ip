@@ -1,0 +1,58 @@
+#!/bin/sh
+# TollGate - Generate random LAN IP address on first boot
+
+# We don't need to check for a flag file since uci-defaults scripts 
+# are automatically run only once after installation or upgrade
+
+# Generate random numbers between 1-254 for each octet
+# Avoiding common subnets like 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+while true; do
+    OCTET1=$((RANDOM % 254 + 1))
+    OCTET2=$((RANDOM % 254 + 1))
+    OCTET3=$((RANDOM % 254 + 1))
+    
+    # Skip common private network ranges
+    if [ $OCTET1 -eq 10 ] || 
+       [ $OCTET1 -eq 192 -a $OCTET2 -eq 168 ] || 
+       [ $OCTET1 -eq 172 -a $OCTET2 -ge 16 -a $OCTET2 -le 31 ]; then
+        continue
+    fi
+    
+    break
+done
+
+# Construct the random IP with last octet as 1
+RANDOM_IP="$OCTET1.$OCTET2.$OCTET3.1"
+echo "Setting random LAN IP to: $RANDOM_IP"
+
+# Update network config using UCI
+uci set network.lan.ipaddr="$RANDOM_IP"
+uci commit network
+
+# Update hosts file
+if grep -q "status.client" /etc/hosts; then
+    # Replace existing entry
+    sed -i "s/.*status\.client/$RANDOM_IP status.client/" /etc/hosts
+else
+    # Add new entry
+    echo "$RANDOM_IP status.client" >> /etc/hosts
+fi
+
+# Opennds config check and update (only if installed)
+if [ -f "/etc/config/opennds" ]; then
+    if uci -q get opennds.@opennds[0] >/dev/null; then
+        # statuspath is typically a URI path, not an IP
+        # If you need to set it to a full URL:
+        # uci set opennds.@opennds[0].statuspath="http://$RANDOM_IP/status"
+        # uci commit opennds
+        echo "OpenNDS detected, would update its config if needed"
+    fi
+fi
+
+# No need for a flag file - uci-defaults handles this automatically
+
+# Schedule network restart (safer than immediate restart during boot)
+(sleep 5 && /etc/init.d/network restart && 
+ [ -f "/etc/init.d/opennds" ] && /etc/init.d/opennds restart) &
+
+exit 0

@@ -68,6 +68,10 @@ define Package/$(PKG_NAME)/install
 	# UCI defaults for configuration
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
+
+	# UCI defaults for random LAN IP
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/etc/uci-defaults/95-random-lan-ip $(1)/etc/uci-defaults/
 	
 	# Keep only TollGate-specific configs
 	$(INSTALL_DIR) $(1)/etc/config
@@ -90,7 +94,8 @@ FILES_$(PKG_NAME) += \
 	/etc/modt/* \
 	/etc/profile \
 	/usr/local/bin/first-login-setup \
-	/etc/uci-defaults/99-tollgate-setup
+	/etc/uci-defaults/99-tollgate-setup \
+	/etc/uci-defaults/95-random-lan-ip
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
