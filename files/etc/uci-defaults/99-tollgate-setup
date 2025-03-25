@@ -1,0 +1,34 @@
+#!/bin/sh
+# TollGate first-boot configuration
+
+# 1. Firewall configuration
+if ! uci -q get firewall.tollgate_rules; then
+    uci add firewall include
+    uci set firewall.@include[-1].path='/etc/config/firewall-tollgate'
+    uci rename firewall.@include[-1]='tollgate_rules'
+    uci commit firewall
+fi
+
+# 2. Configure uhttpd listener ports
+current_listen=$(uci -q get uhttpd.main.listen_http)
+if [ "$current_listen" != "0.0.0.0:8080" ]; then
+    uci set uhttpd.main.listen_http='0.0.0.0:8080'
+    uci add_list uhttpd.main.listen_http='[::]:8080'
+    uci commit uhttpd
+fi
+
+# 3. Add first-login-setup hook to profile if it doesn't exist
+if ! grep -q "first-login-setup" /etc/profile; then
+    # Append the first-login-setup code to the end of profile
+    cat >> /etc/profile << 'EOF'
+
+# TollGate first login setup
+if [ ! -f /etc/first_login_done ] && [ -t 0 ] && [ -t 1 ]; then
+    /usr/local/bin/first-login-setup
+fi
+EOF
+    echo "Added first-login-setup hook to /etc/profile"
+fi
+
+# Ensure script exits successfully
+exit 0
