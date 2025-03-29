@@ -33,7 +33,7 @@ define Package/$(PKG_NAME)
 	SECTION:=net
 	CATEGORY:=Network
 	TITLE:=TollGate Basic Module
-	DEPENDS:=$(GO_ARCH_DEPENDS)
+	DEPENDS:=$(GO_ARCH_DEPENDS) +nodogsplash
 endef
 
 define Package/$(PKG_NAME)/description
