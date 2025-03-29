@@ -84,6 +84,19 @@ define Package/$(PKG_NAME)/install
 	# First-login setup
 	$(INSTALL_DIR) $(1)/usr/local/bin
 	$(INSTALL_BIN) ./files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
+	# Create postinst script to display LuCI URL message
+	$(INSTALL_DIR) $(1)/CONTROL
+	echo "#!/bin/sh" > $(1)/CONTROL/postinst
+	echo "echo ''" >> $(1)/CONTROL/postinst
+	echo "echo '╔════════════════════════════════════════════════════════════════╗'" >> $(1)/CONTROL/postinst
+	echo "echo '║ TollGate Module installation complete!                         ║'" >> $(1)/CONTROL/postinst
+	echo "echo '║ Access the LuCI web interface at:                              ║'" >> $(1)/CONTROL/postinst
+	echo "echo '║ http://'\`uci get network.lan.ipaddr\`':8080                        ║'" >> $(1)/CONTROL/postinst
+	echo "echo '║ Use this interface to configure your TollGate settings.        ║'" >> $(1)/CONTROL/postinst
+	echo "echo '╚════════════════════════════════════════════════════════════════╝'" >> $(1)/CONTROL/postinst
+	echo "echo ''" >> $(1)/CONTROL/postinst
+	echo "exit 0" >> $(1)/CONTROL/postinst
+	chmod 755 $(1)/CONTROL/postinst
 endef
 
 # Update FILES declaration
