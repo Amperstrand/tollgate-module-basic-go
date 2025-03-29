@@ -30,17 +30,33 @@ else
     log_message "Firewall tollgate_rules already exists"
 fi
 
-# 2. Configure uhttpd listener ports
-log_message "Configuring uhttpd listener ports"
-current_listen=$(uci -q get uhttpd.main.listen_http)
-if [ "$current_listen" != "0.0.0.0:8080" ]; then
-    uci set uhttpd.main.listen_http='0.0.0.0:8080'
-    uci add_list uhttpd.main.listen_http='[::]:8080'
-    uci commit uhttpd
-    log_message "Updated uhttpd to listen on port 8080"
-else
-    log_message "uhttpd already configured for port 8080"
-fi
+# 2. Configure uhttpd listener ports and settings
+log_message "Configuring uhttpd settings"
+
+# Set HTTP listeners
+uci -q delete uhttpd.main.listen_http
+uci add_list uhttpd.main.listen_http='0.0.0.0:8080'
+uci add_list uhttpd.main.listen_http='[::]:8080'
+
+# Set HTTPS listeners
+uci -q delete uhttpd.main.listen_https
+uci add_list uhttpd.main.listen_https='0.0.0.0:443'
+uci add_list uhttpd.main.listen_https='[::]:443'
+
+# Set other important settings
+uci set uhttpd.main.redirect_https='0'
+uci set uhttpd.main.home='/www'
+uci set uhttpd.main.rfc1918_filter='1'
+uci set uhttpd.main.max_requests='3'
+uci set uhttpd.main.max_connections='100'
+uci set uhttpd.main.script_timeout='60'
+uci set uhttpd.main.network_timeout='30'
+uci set uhttpd.main.http_keepalive='20'
+uci set uhttpd.main.tcp_keepalive='1'
+
+# Commit changes
+uci commit uhttpd
+log_message "Updated uhttpd configuration"
 
 # 3. Configure DNS settings
 log_message "Configuring DNS settings"
