@@ -84,6 +84,20 @@ define Package/$(PKG_NAME)/install
 	# First-login setup
 	$(INSTALL_DIR) $(1)/usr/local/bin
 	$(INSTALL_BIN) ./files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
+	
+	# NoDogSplash custom files
+	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs
+	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/*.json $(1)/etc/nodogsplash/htdocs/
+	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/*.html $(1)/etc/nodogsplash/htdocs/
+	
+	# NoDogSplash static files (CSS, JS, media)
+	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/css
+	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/js
+	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/media
+	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/css/* $(1)/etc/nodogsplash/htdocs/static/css/
+	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/js/* $(1)/etc/nodogsplash/htdocs/static/js/
+	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/media/* $(1)/etc/nodogsplash/htdocs/static/media/
+	
 	# Create postinst script to display LuCI URL message
 	$(INSTALL_DIR) $(1)/CONTROL
 	echo "#!/bin/sh" > $(1)/CONTROL/postinst
@@ -99,7 +113,7 @@ define Package/$(PKG_NAME)/install
 	chmod 755 $(1)/CONTROL/postinst
 endef
 
-# Update FILES declaration
+# Update FILES declaration to include NoDogSplash files
 FILES_$(PKG_NAME) += \
 	/usr/bin/tollgate-basic \
 	/etc/init.d/tollgate-basic \
@@ -108,7 +122,12 @@ FILES_$(PKG_NAME) += \
 	/etc/profile \
 	/usr/local/bin/first-login-setup \
 	/etc/uci-defaults/99-tollgate-setup \
-	/etc/uci-defaults/95-random-lan-ip
+	/etc/uci-defaults/95-random-lan-ip \
+	/etc/nodogsplash/htdocs/*.json \
+	/etc/nodogsplash/htdocs/*.html \
+	/etc/nodogsplash/htdocs/static/css/* \
+	/etc/nodogsplash/htdocs/static/js/* \
+	/etc/nodogsplash/htdocs/static/media/*
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
