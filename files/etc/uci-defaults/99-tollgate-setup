@@ -17,7 +17,35 @@ if [ "$current_listen" != "0.0.0.0:8080" ]; then
     uci commit uhttpd
 fi
 
-# 3. Add first-login-setup hook to profile if it doesn't exist
+# 3. Configure NoDogSplash
+if ! uci -q get nodogsplash.@nodogsplash[0]; then
+    # Create nodogsplash section if it doesn't exist
+    uci add nodogsplash nodogsplash
+fi
+
+# Set basic NoDogSplash configuration
+uci set nodogsplash.@nodogsplash[0].enabled='1'
+uci set nodogsplash.@nodogsplash[0].gatewayname='TollGate Nodogsplash'
+uci set nodogsplash.@nodogsplash[0].gatewayinterface='br-lan'
+
+# Ensure TollGate protocol port is allowed
+uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2121'
+uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080'
+uci commit nodogsplash
+
+# 4. Add TollGate port to firewall (if not in firewall-tollgate)
+if ! grep -q "port 2121" /etc/config/firewall-tollgate 2>/dev/null; then
+    # Add rule directly to main firewall if not in tollgate-specific file
+    uci add firewall rule
+    uci set firewall.@rule[-1].name='Allow-TollGate-Protocol'
+    uci set firewall.@rule[-1].src='wan'
+    uci set firewall.@rule[-1].proto='tcp'
+    uci set firewall.@rule[-1].dest_port='2121'
+    uci set firewall.@rule[-1].target='ACCEPT'
+    uci commit firewall
+fi
+
+# 5. Add first-login-setup hook to profile if it doesn't exist
 if ! grep -q "first-login-setup" /etc/profile; then
     # Append the first-login-setup code to the end of profile
     cat >> /etc/profile << 'EOF'
