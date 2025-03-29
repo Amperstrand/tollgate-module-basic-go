@@ -3,7 +3,8 @@
 
 # Enable or disable logging (set to 0 to disable)
 ENABLE_LOGGING=1
-LOG_FILE="/tmp/tollgate-setup.log"
+# LOG_FILE="/tmp/tollgate-setup.log"
+LOG_FILE="/etc/tollgate/setup.log"
 
 # Logging function
 log_message() {
