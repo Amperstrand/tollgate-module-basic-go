@@ -40,12 +40,13 @@ uci commit dhcp
 # 4. Configure WiFi networks
 # Generate a random 4-character suffix for the SSID
 RANDOM_SUFFIX=$(head /dev/urandom | tr -dc 'A-Z0-9' | head -c 4)
+SSID_BASE="TollGate-${RANDOM_SUFFIX}"
 
 # Check if default radio0 exists before configuring
 if uci -q get wireless.default_radio0 >/dev/null; then
     # Configure 2.4GHz WiFi with random suffix
     uci set wireless.default_radio0.name='tollgate_2g_open'
-    uci set wireless.default_radio0.ssid="TollGate-${RANDOM_SUFFIX} - Setup"
+    uci set wireless.default_radio0.ssid="${SSID_BASE}"
     uci set wireless.default_radio0.encryption='none'
 fi
 
@@ -53,7 +54,7 @@ fi
 if uci -q get wireless.default_radio1 >/dev/null; then
     # Configure 5GHz WiFi with the same random suffix
     uci set wireless.default_radio1.name='tollgate_5g_open'
-    uci set wireless.default_radio1.ssid="TollGate-${RANDOM_SUFFIX} - Setup"
+    uci set wireless.default_radio1.ssid="${SSID_BASE}"
     uci set wireless.default_radio1.encryption='none'
 fi
 
@@ -74,9 +75,9 @@ if ! uci -q get nodogsplash.@nodogsplash[0]; then
     uci add nodogsplash nodogsplash
 fi
 
-# Set basic NoDogSplash configuration
+# Set basic NoDogSplash configuration with matching gateway name
 uci set nodogsplash.@nodogsplash[0].enabled='1'
-uci set nodogsplash.@nodogsplash[0].gatewayname='TollGate Nodogsplash'
+uci set nodogsplash.@nodogsplash[0].gatewayname="${SSID_BASE} Portal"
 uci set nodogsplash.@nodogsplash[0].gatewayinterface='br-lan'
 
 # Ensure TollGate protocol port is allowed
