@@ -27,7 +27,7 @@ PKG_USE_MIPS16:=0
 GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 
 include $(INCLUDE_DIR)/package.mk
-$(eval $(call GoPackage))
+$(eval $(call GoPackage)) +nodogsplash +luci
 
 define Package/$(PKG_NAME)
 	SECTION:=net
