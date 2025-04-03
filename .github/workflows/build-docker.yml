@@ -39,7 +39,7 @@ jobs:
 
       - name: Download prebuilt golang package
         run: |
-          curl -L ${{ env.GOLANG_PACKAGE_URL }} --create-dirs -o /builder/bin/packages/golang.ipk
+          curl -L ${{ env.GOLANG_PACKAGE_URL }} --create-dirs -o /builder/bin/packages/mediatek/golang.ipk
 
       - name: Move sources to sdk folder
         run: |
@@ -50,6 +50,8 @@ jobs:
           echo "\n - Configuring SDK\n"
           cd /builder
 
+          apt-get update && apt-get install -y golang-go
+          
           # Add Go feed
           # echo "src-git golang https://github.com/openwrt/packages.git;openwrt-23.05" >> feeds.conf.default
           ./scripts/feeds update golang
