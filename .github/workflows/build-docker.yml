@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          path: /builder/package/
+          path: builder/package/
 
       - name: Cache Docker layers
         uses: actions/cache@v3
@@ -48,8 +48,11 @@ jobs:
           echo "builder dir"
           ls /builder
           
-           echo "package dir"
+          echo "package dir"
           ls /builder/package
+          
+          echo "clone dir"
+          ls builder/package
           
           echo "Compiling"
           make /builder/package/tollgate-module-basic-go/compile
