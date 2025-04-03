@@ -19,13 +19,6 @@ on:
 #        arch: "aarch64_cortex-a53"
 #      },
 
-
-inputs:
-  prebuilt_golang:
-    description: 'Download URL for prebuild golang package'
-    required: false
-    default: 'https://github.com/OpenTollGate/tollgate-sdk/actions/runs/13928706186/artifacts/2774415485'
-
 jobs:
   build-package:
     runs-on: ubuntu-latest
@@ -37,8 +30,8 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
 
 
-#    env:
-#      MODULE_NAME: "basic"
+    env:
+      GOLANG_PACKAGE_URL: "https://github.com/OpenTollGate/tollgate-sdk/actions/runs/13928706186/artifacts/2774415485"
     steps:
       - uses: actions/checkout@v3
         with:
@@ -46,7 +39,7 @@ jobs:
 
       - name: Download prebuilt golang package
         run: |
-          curl -L ${{ inputs.prebuilt_golang }} -o /builder/bin/packages/golang.ipk
+          curl -L ${{ env.GOLANG_PACKAGE_URL }} -o /builder/bin/packages/golang.ipk
 
       - name: Move sources to sdk folder
         run: |
