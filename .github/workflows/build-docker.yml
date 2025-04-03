@@ -40,8 +40,14 @@ jobs:
         run: |
           mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
           
-          echo "\n - Compiling\n"
+          echo "\n - Configuring SDK\n"
           cd /builder
+          # Generate default configuration
+          make defconfig
+          # Update configuration for our needs
+          echo "CONFIG_PACKAGE_tollgate-module-basic-go=y" >> .config
+          
+          echo "\n - Compiling\n"
           make -j1 package/tollgate-module-basic-go/compile
 #
 #      # Add this early in the job
