@@ -8,25 +8,14 @@ on:
 env:
   PACKAGE_NAME: "tollgate-module-basic-go"
   GOARCH: "arm64"
-  DEBUG: "true"
+#  DEBUG: "true"
   # GOMIPS: "softfloat"
-
-
-#      {
-#        name: "glmt3000",
-#        goarch: "arm64",
-#        model: "gl-mt3000",
-#        platform: "mediatek",
-#        subtarget: "filogic",
-#        profile: "glinet_gl-mt3000",
-#        arch: "aarch64_cortex-a53"
-#      },
 
 jobs:
   build-package:
     runs-on: ubuntu-latest
     container:
-      image: openwrt/sdk:mediatek-filogic-24.10.0 # 23.05.3
+      image: openwrt/sdk:mediatek-filogic-23.05.3
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
 
     steps:
@@ -74,11 +63,8 @@ jobs:
           echo "✅ Found package at: $PACKAGE_PATH"
           echo "PACKAGE_FULLPATH=$PACKAGE_PATH" >> $GITHUB_ENV
 
-      - name: Blossom upload package
-        uses: Origami74/upload-blossom-action@main
-        with:
-          host: "https://blossom.swissdash.site"
-          filePath: ${{ env.PACKAGE_FULLPATH }}
+          FILE_SIZE=$(stat -c%s "${{ env.PACKAGE_FULLPATH }}")
+          echo "PACKAGE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
 
       - name: GitHub Artifact upload
         uses: actions/upload-artifact@v4
@@ -87,28 +73,26 @@ jobs:
           path: ${{ env.PACKAGE_FULLPATH }}
           retention-days: 5
 
-     # Add a step to save the outputs to environment variables
+      - name: Blossom upload package
+        uses: Origami74/upload-blossom-action@improve-io
+        with:
+          host: "https://blossom.swissdash.site"
+          filePath: ${{ env.PACKAGE_FULLPATH }}
+     
       - name: Save Upload Results to Environment
         run: |
-          # Debug first
+        
+          
           echo "Upload outputs:"
           echo "  URL: ${{ steps.upload_package.outputs.url }}"
           echo "  Hash: ${{ steps.upload_package.outputs.hash }}"
           echo "  Success: ${{ steps.upload_package.outputs.success }}"
+          echo "  Size: ${{ env.PACKAGE_SIZE }} bytes"
+          
+          echo "PACKAGE_URL=${{ steps.upload_package.outputs.url }}" >> $GITHUB_ENV
+          echo "PACKAGE_HASH=${{ steps.upload_package.outputs.hash }}" >> $GITHUB_ENV
 
-#           # Save to environment variables
-#           echo "PACKAGE_URL=${{ steps.upload_package.outputs.url }}" >> $GITHUB_ENV
-#           echo "PACKAGE_HASH=${{ steps.upload_package.outputs.hash }}" >> $GITHUB_ENV
 
-#           # Get file size directly if needed
-#           if [ -f "${{ env.PACKAGE_FULLPATH }}" ]; then
-#             FILE_SIZE=$(stat -c%s "${{ env.PACKAGE_FULLPATH }}")
-#             echo "PACKAGE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
-#             echo "File size: $FILE_SIZE bytes"
-#           else
-#             echo "WARNING: Package file not found at ${{ env.PACKAGE_FULLPATH }}"
-#           fi
-# #
 #      - name: Publish Package NIP-94 Metadata
 #        id: publish_package
 #        if: steps.upload_package.outputs.success == 'true'
