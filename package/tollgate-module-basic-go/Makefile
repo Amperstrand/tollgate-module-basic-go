@@ -77,10 +77,6 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/files/etc/config/firewall-tollgate $(1)/etc/config/
 	
-	# System files (non-UCI)
-	# $(INSTALL_DIR) $(1)/etc/modt
-	# $(INSTALL_DATA) $(PKG_BUILD_DIR)/files/etc/modt/* $(1)/etc/modt/
-	
 	# First-login setup
 	$(INSTALL_DIR) $(1)/usr/local/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
