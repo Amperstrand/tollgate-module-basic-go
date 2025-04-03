@@ -7,6 +7,7 @@ on:
 ## Add global env vars for the whole workflow
 env:
   PACKAGE_NAME: "tollgate-module-basic-go"
+  ARCHITECTURE: "aaarch64blablabla"
   GOARCH: "arm64"
 #  DEBUG: "true"
   # GOMIPS: "softfloat"
@@ -73,26 +74,26 @@ jobs:
           path: ${{ env.PACKAGE_FULLPATH }}
           retention-days: 5
 
-      - name: Blossom upload package
+      - name: Blossom Artifact upload
+        id: blossom_upload
         uses: Origami74/upload-blossom-action@improve-io
         with:
           host: "https://blossom.swissdash.site"
           filePath: ${{ env.PACKAGE_FULLPATH }}
      
-      - name: Save Upload Results to Environment
+      - name: Blossom Artifact upload - Process response
         run: |
           echo "Upload outputs:"
-          echo "  URL: ${{ steps.upload_package.outputs.url }}"
-          echo "  Hash: ${{ steps.upload_package.outputs.hash }}"
+          echo "  URL: ${{ steps.blossom_upload.outputs.url }}"
+          echo "  Hash: ${{ steps.blossom_upload.outputs.hash }}"
           # echo "  Size: ${{ env.PACKAGE_SIZE }} bytes"
           
-          echo "PACKAGE_URL=${{ steps.upload_package.outputs.url }}" >> $GITHUB_ENV
-          echo "PACKAGE_HASH=${{ steps.upload_package.outputs.hash }}" >> $GITHUB_ENV
-
+          echo "PACKAGE_URL=${{ steps.blossom_upload.outputs.url }}" >> $GITHUB_ENV
+          echo "PACKAGE_HASH=${{ steps.blossom_upload.outputs.hash }}" >> $GITHUB_ENV
+          
+          echo "PACKAGE_FILENAME=${{ env.PACKAGE_NAME }}-${{ env.MODEL }}-${{ env.GOARCH }}.ipk" >> $GITHUB_ENV
 
 #      - name: Publish Package NIP-94 Metadata
-#        id: publish_package
-#        if: steps.upload_package.outputs.success == 'true'
 #        uses: OpenTollGate/nostr-publish-file-metadata-action/python@main
 #        with:
 #          relays: wss://relay.damus.io,wss://nos.lol,wss://nostr.mom/
@@ -103,15 +104,15 @@ jobs:
 #          filename: "${{ env.PACKAGE_FILENAME }}"
 #          content: |
 #            {
-#              "description": "TollGate Module Relay OpenWRT package for ${{ env.MODEL }}",
-#              "module": "${{ env.MODULE_NAME }}",
-#              "model": "${{ env.MODEL }}",
+#              "description": "TollGate ${{ env.PACKAGE_NAME }} OpenWRT package for ${{ env.MODEL }}",
+#              "module": "${{ env.PACKAGE_NAME }}",
 #              "version": "0.0.1"
 #            }
 #          nsec: ${{ secrets.NSEC }}
 #          size: ${{ env.PACKAGE_SIZE }}
-#          architecture: "${{ env.ARCH }}"
+#          architecture: "${{ env.GOARCH }}"
 #
+
 #      - name: Verify Package NIP-94 Event
 #        id: verify_package
 #        if: steps.publish_package.outputs.eventId != ''
@@ -125,13 +126,6 @@ jobs:
 #      #   run: |
 #      #     echo "❌ Failed to verify package publication on relays"
 #      #     exit 1
-#
-#      - name: Upload Package Artifact
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: package-${{ matrix.target.model }}
-#          path: ${{ env.PACKAGE_FULLPATH }}
-#          retention-days: 5
 #
 #      - name: Build Summary
 #        run: |
