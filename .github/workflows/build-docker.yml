@@ -5,8 +5,9 @@ on:
     branches: [ "build-with-docker" ]
 
 ## Add global env vars for the whole workflow
-#env:
-#  DEFAULT_MODULE_NAME: "basic"
+env:
+  GOARCH: "arm64"
+  # GOMIPS: "softfloat"
 
 
 #      {
@@ -57,6 +58,7 @@ jobs:
       - name: Compile Package
         run: |
           cd /builder
+          GOARCH=${{ env.GOARCH }}
           make -j$(nproc) package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
