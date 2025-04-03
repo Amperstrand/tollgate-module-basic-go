@@ -34,8 +34,8 @@ define Package/$(PKG_NAME)
 	CATEGORY:=Network
 	TITLE:=TollGate Basic Module
 	DEPENDS:=$(GO_ARCH_DEPENDS) +nodogsplash
-	PROVIDES:=nodogsplash-htdocs
-	CONFLICTS:=
+	#PROVIDES:=nodogsplash-htdocs
+	#CONFLICTS:=
 endef
 
 define Package/$(PKG_NAME)/description
@@ -131,7 +131,7 @@ FILES_$(PKG_NAME) += \
 	/etc/nodogsplash/htdocs/static/js/* \
 	/etc/nodogsplash/htdocs/static/media/*
 
-PKG_FLAGS:=overwrite
+#PKG_FLAGS:=overwrite
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
