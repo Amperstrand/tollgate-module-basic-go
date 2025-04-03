@@ -63,13 +63,13 @@ jobs:
           make -j1 package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
+        continue-on-error: true
         run: |
-          cd /builder
           ls -R /builder/build_dir | grep ".ipk"
 
       - name: List output package(s) 2
+        continue-on-error: true
         run: |
-          cd /builder
           ls -R /builder/bin/packages | grep ".ipk"
 
 #
