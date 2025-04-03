@@ -27,30 +27,30 @@ jobs:
     strategy:
       matrix:
         target: [
-          {
-            name: "ath79-nor",
-            goarch: "mips",
-            gomips: "softfloat",
-            model: "gl-ar300m16",
-            platform: "ath79",
-            subtarget: "generic",
-            profile: "glinet_gl-ar300m16-nor",
-            arch: "mips_24kc",
-            device: "glinet,gl-ar300m16-nor",
-            rootfs_size: "16384k",
-            kernel_size: "2048k"
-          },
-          {
-            name: "ath79-nand", 
-            goarch: "mips", 
-            gomips: "softfloat", 
-            model: "gl-ar300m", 
-            platform: "ath79", 
-            subtarget: "generic", 
-            profile: "glinet_gl-ar300m",
-            arch: "mips_24kc",
-            device: "glinet,gl-ar300m"
-          },
+          # {
+          #   name: "ath79-nor",
+          #   goarch: "mips",
+          #   gomips: "softfloat",
+          #   model: "gl-ar300m16",
+          #   platform: "ath79",
+          #   subtarget: "generic",
+          #   profile: "glinet_gl-ar300m16-nor",
+          #   arch: "mips_24kc",
+          #   device: "glinet,gl-ar300m16-nor",
+          #   rootfs_size: "16384k",
+          #   kernel_size: "2048k"
+          # },
+          # {
+          #   name: "ath79-nand", 
+          #   goarch: "mips", 
+          #   gomips: "softfloat", 
+          #   model: "gl-ar300m", 
+          #   platform: "ath79", 
+          #   subtarget: "generic", 
+          #   profile: "glinet_gl-ar300m",
+          #   arch: "mips_24kc",
+          #   device: "glinet,gl-ar300m"
+          # },
           {
             name: "glmt3000", 
             goarch: "arm64", 
@@ -59,16 +59,16 @@ jobs:
             subtarget: "filogic", 
             profile: "glinet_gl-mt3000",
             arch: "aarch64_cortex-a53"
-          },
-          {
-            name: "glmt6000", 
-            goarch: "arm64", 
-            model: "gl-mt6000", 
-            platform: "mediatek", 
-            subtarget: "filogic",
-            profile: "glinet_gl-mt6000", 
-            arch: "aarch64_cortex-a53"
-          }
+          } #,
+          # {
+          #   name: "glmt6000", 
+          #   goarch: "arm64", 
+          #   model: "gl-mt6000", 
+          #   platform: "mediatek", 
+          #   subtarget: "filogic",
+          #   profile: "glinet_gl-mt6000", 
+          #   arch: "aarch64_cortex-a53"
+          # }
         ]
       fail-fast: false
     steps:
