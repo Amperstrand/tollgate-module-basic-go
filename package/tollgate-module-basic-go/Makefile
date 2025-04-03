@@ -108,6 +108,9 @@ define Package/$(PKG_NAME)/install
 	echo "exit 0" >> $(1)/CONTROL/postinst
 	chmod 755 $(1)/CONTROL/postinst
 
+	# Create required directories
+	$(INSTALL_DIR) $(1)/etc/tollgate
+
 endef
 
 # Update FILES declaration to include NoDogSplash files
