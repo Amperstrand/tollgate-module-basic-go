@@ -24,13 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: openwrt/sdk:mediatek-filogic-24.10.0
+      options: --user root
 #    env:
 #      MODULE_NAME: "basic"
     steps:
       - uses: actions/checkout@v3
-        with:
-          clean: false
-          set-safe-directory: false
 
       - name: Test sdk present
         run: |
