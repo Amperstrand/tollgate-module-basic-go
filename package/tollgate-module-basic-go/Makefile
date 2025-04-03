@@ -97,20 +97,6 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/css/* $(1)/etc/nodogsplash/htdocs/static/css/
 	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/js/* $(1)/etc/nodogsplash/htdocs/static/js/
 	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/media/* $(1)/etc/nodogsplash/htdocs/static/media/
-	
-	# Create postinst script to display LuCI URL message
-	$(INSTALL_DIR) $(1)/CONTROL
-	echo "#!/bin/sh" > $(1)/CONTROL/postinst
-	echo "echo ''" >> $(1)/CONTROL/postinst
-	echo "echo '╔════════════════════════════════════════════════════════════════╗'" >> $(1)/CONTROL/postinst
-	echo "echo '║ TollGate Module installation complete!                         ║'" >> $(1)/CONTROL/postinst
-	echo "echo '║ Access the LuCI web interface at:                              ║'" >> $(1)/CONTROL/postinst
-	echo "echo '║ http://'\`uci get network.lan.ipaddr\`':8080                        ║'" >> $(1)/CONTROL/postinst
-	echo "echo '║ Use this interface to configure your TollGate settings.        ║'" >> $(1)/CONTROL/postinst
-	echo "echo '╚════════════════════════════════════════════════════════════════╝'" >> $(1)/CONTROL/postinst
-	echo "echo ''" >> $(1)/CONTROL/postinst
-	echo "exit 0" >> $(1)/CONTROL/postinst
-	chmod 755 $(1)/CONTROL/postinst
 endef
 
 # Update FILES declaration to include NoDogSplash files
