@@ -58,8 +58,7 @@ jobs:
       - name: Compile Package
         run: |
           cd /builder
-          GOARCH=${{ env.GOARCH }}
-          make -j$(nproc) package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
+          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} make -j$(nproc) package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
         run: |
