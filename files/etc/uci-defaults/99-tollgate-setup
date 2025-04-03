@@ -3,18 +3,18 @@
 
 # Enable or disable logging (set to 0 to disable)
 ENABLE_LOGGING=1
-LOG_FILE="/tmp/tollgate-setup.log"
+LOGFILE="/tmp/tollgate-setup.log"
 
 # Logging function
 log_message() {
     if [ "$ENABLE_LOGGING" -eq 1 ]; then
-        echo "$(date "+%Y-%m-%d %H:%M:%S") - $1" >> "$LOG_FILE"
+        echo "$(date "+%Y-%m-%d %H:%M:%S") - $1" >> "$LOGFILE"
     fi
 }
 
 # Initialize log file if logging is enabled
 if [ "$ENABLE_LOGGING" -eq 1 ]; then
-    echo "TollGate Setup Log - Started at $(date)" > "$LOG_FILE"
+    echo "TollGate Setup Log - Started at $(date)" > "$LOGFILE"
     log_message "Starting TollGate configuration script"
 fi
 

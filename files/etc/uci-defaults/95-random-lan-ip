@@ -4,6 +4,9 @@
 # We don't need to check for a flag file since uci-defaults scripts 
 # are automatically run only once after installation or upgrade
 
+# Initialize random seed
+RANDOM=$$$(date +%s)
+
 # Randomly select one of the three private IP ranges:
 # 1: 10.0.0.0/8
 # 2: 172.16.0.0/12
@@ -14,8 +17,9 @@ case $RANGE_SELECT in
     1)
         # 10.0.0.0/8 range
         OCTET1=10
-        OCTET2=$((RANDOM % 256))
-        OCTET3=$((RANDOM % 256))
+        # Ensure we actually use the random values
+        OCTET2=$((1 + RANDOM % 254))  # 1-254
+        OCTET3=$((1 + RANDOM % 254))  # 1-254
         ;;
     2)
         # 172.16.0.0/12 range (172.16.x.x - 172.31.x.x)
