@@ -50,19 +50,18 @@ jobs:
           echo "\n - Configuring SDK\n"
           cd /builder
 
-          apt-get update && apt-get install -y golang-go-1.23
-
-          # Add Go feed
-          # echo "src-git golang https://github.com/openwrt/packages.git;openwrt-23.05" >> feeds.conf.default
-          ./scripts/feeds update golang
-          ./scripts/feeds install -a -p golang
+          # Add golang-backports repository
+          echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
+          apt-get update
+          
+          # Install Go from backports
+          apt-get install -y -t bookworm-backports golang-go
 
           # Generate default configuration
           make defconfig
 
           # Update configuration for our needs
           echo "CONFIG_PACKAGE_tollgate-module-basic-go=y" >> .config
-          echo "CONFIG_PACKAGE_golang=y" >> .config
           
       - name: Compile
         run: |
