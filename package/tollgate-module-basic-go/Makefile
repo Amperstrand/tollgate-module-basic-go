@@ -64,39 +64,6 @@ define Package/$(PKG_NAME)/install
 	# Init script
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/tollgate-basic $(1)/etc/init.d/
-	
-	# UCI defaults for configuration
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
-
-	# UCI defaults for random LAN IP
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/etc/uci-defaults/95-random-lan-ip $(1)/etc/uci-defaults/
-	
-	# Keep only TollGate-specific configs
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DATA) ./files/etc/config/firewall-tollgate $(1)/etc/config/
-	
-	# System files (non-UCI)
-	$(INSTALL_DIR) $(1)/etc/modt
-	$(INSTALL_DATA) ./files/etc/modt/* $(1)/etc/modt/
-	
-	# First-login setup
-	$(INSTALL_DIR) $(1)/usr/local/bin
-	$(INSTALL_BIN) ./files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
-	
-	# NoDogSplash custom files
-	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs
-	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/*.json $(1)/etc/nodogsplash/htdocs/
-	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/*.html $(1)/etc/nodogsplash/htdocs/
-	
-	# NoDogSplash static files (CSS, JS, media)
-	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/css
-	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/js
-	$(INSTALL_DIR) $(1)/etc/nodogsplash/htdocs/static/media
-	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/css/* $(1)/etc/nodogsplash/htdocs/static/css/
-	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/js/* $(1)/etc/nodogsplash/htdocs/static/js/
-	$(INSTALL_DATA) ./files/etc/nodogsplash/htdocs/static/media/* $(1)/etc/nodogsplash/htdocs/static/media/
 endef
 
 # Update FILES declaration to include NoDogSplash files
