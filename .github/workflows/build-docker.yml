@@ -44,19 +44,16 @@ jobs:
       - name: Move sources to sdk folder
         run: |
           mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
-      
 
       - name: Configure SDK
         run: |
           echo "\n - Configuring SDK\n"
           cd /builder
 
-#          # Add Go feed
-#          echo "src-git golang https://github.com/openwrt/packages.git;openwrt-23.05" >> feeds.conf.default
+          # Add Go feed
+          # echo "src-git golang https://github.com/openwrt/packages.git;openwrt-23.05" >> feeds.conf.default
           ./scripts/feeds update golang
           ./scripts/feeds install -a -p golang
-        
-          
 
           # Generate default configuration
           make defconfig
