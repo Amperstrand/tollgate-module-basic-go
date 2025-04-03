@@ -25,6 +25,9 @@ jobs:
     container:
       image: openwrt/sdk:mediatek-filogic-24.10.0
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
+      env:
+        TERM: xterm-256color
+        DEBIAN_FRONTEND: noninteractive
 
 #    env:
 #      MODULE_NAME: "basic"
@@ -35,23 +38,11 @@ jobs:
 
       - name: Test sdk present
         run: |
-          echo "\n- builder dir\n"
-          ls /builder
-          
-          echo "\n- package dir\n"
-          ls /builder/package
-          
-          echo "\n- clone dir\n"
-          ls tollgate-module-basic-go
-          
           mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
-          
-          echo "\n- mv dir\n"
-          ls /builder/package/tollgate-module-basic-go
           
           echo "\n - Compiling\n"
           cd /builder
-          make /builder/package/tollgate-module-basic-go/compile
+          make -j1 package/tollgate-module-basic-go/compile
 #
 #      # Add this early in the job
 #      - name: Set Environment Variables
