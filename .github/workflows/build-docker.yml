@@ -60,56 +60,13 @@ jobs:
       - name: Compile Package
         run: |
           cd /builder
-          make -j1 package/tollgate-module-basic-go/compile V=sc
+          make -j1 package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}- name: Compile Package
 
-#
-#      # Add this early in the job
-#      - name: Set Environment Variables
-#        run: |
-#          echo "MODULE_NAME=${MODULE_NAME:-basic}" >> $GITHUB_ENV
-#          echo "MODEL=${{ matrix.target.model }}" >> $GITHUB_ENV
-#
-#          # Get architecture from matrix or detect using pure shell syntax
-#          ARCH_VALUE="${{ matrix.target.arch }}"
-#          if [ -z "$ARCH_VALUE" ]; then
-#              ARCH_VALUE=$(uname -m)
-#          fi
-#
-#          echo "ARCH=$ARCH_VALUE" >> $GITHUB_ENV
-#          echo "PACKAGE_FILENAME=${MODULE_NAME:-basic}-${{ matrix.target.model }}-${ARCH_VALUE}.ipk" >> $GITHUB_ENV
-#          echo "PLATFORM=${{ matrix.target.platform }}" >> $GITHUB_ENV
-#
-#      # Download prebuilt golang packages
-#      - name: Download Prebuilt Golang
-#        uses: dawidd6/action-download-artifact@v2
-#        with:
-#          workflow: prebuild-golang.yml
-#          workflow_conclusion: success
-#          name: golang-${{ matrix.target.model }}-${{ matrix.target.platform }}-${{ matrix.target.subtarget }}
-#          path: prebuilt/
-#          repo: OpenTollGate/tollgate-sdk
-#          github_token: ${{ secrets.GITHUB_TOKEN }}
-#
-#
-#      - name: Find Golang Package
-#        id: find_golang
-#        run: |
-#          GOLANG_IPK=$(find prebuilt -name "golang*.ipk" | head -n 1)
-#          echo "Found golang package: $GOLANG_IPK"
-#          echo "golang_ipk=$GOLANG_IPK" >> $GITHUB_OUTPUT
-#
-#      - name: Build OpenWRT Package
-#        id: build_package
-#        uses: OpenTollGate/tollgate-sdk@main
-#        with:
-#          model: ${{ matrix.target.model }}
-#          platform: ${{ matrix.target.platform }}
-#          subtarget: ${{ matrix.target.subtarget }}
-#          module: tollgate-module-basic-go
-#          prebuilt_golang: ${{ steps.find_golang.outputs.golang_ipk }}
-#          # device: ${{ matrix.target.device }}
-#          # rootfs_size: ${{ matrix.target.rootfs_size }}
-#          # kernel_size: ${{ matrix.target.kernel_size }}
+      - name: List output package(s)
+        run: |
+          cd /builder
+          ls -R /builder/build_dir
+
 #
 #      - name: Debug output
 #        run: |
