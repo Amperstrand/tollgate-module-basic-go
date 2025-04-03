@@ -63,8 +63,8 @@ jobs:
           echo "✅ Found package at: $PACKAGE_PATH"
           echo "PACKAGE_FULLPATH=$PACKAGE_PATH" >> $GITHUB_ENV
 
-          FILE_SIZE=$(stat -c%s "${{ env.PACKAGE_FULLPATH }}")
-          echo "PACKAGE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          # FILE_SIZE=$(stat -c%s "${{ env.PACKAGE_FULLPATH }}")
+          # echo "PACKAGE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
 
       - name: GitHub Artifact upload
         uses: actions/upload-artifact@v4
@@ -81,13 +81,10 @@ jobs:
      
       - name: Save Upload Results to Environment
         run: |
-        
-          
           echo "Upload outputs:"
           echo "  URL: ${{ steps.upload_package.outputs.url }}"
           echo "  Hash: ${{ steps.upload_package.outputs.hash }}"
-          echo "  Success: ${{ steps.upload_package.outputs.success }}"
-          echo "  Size: ${{ env.PACKAGE_SIZE }} bytes"
+          # echo "  Size: ${{ env.PACKAGE_SIZE }} bytes"
           
           echo "PACKAGE_URL=${{ steps.upload_package.outputs.url }}" >> $GITHUB_ENV
           echo "PACKAGE_HASH=${{ steps.upload_package.outputs.hash }}" >> $GITHUB_ENV
