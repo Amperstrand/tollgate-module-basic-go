@@ -33,7 +33,7 @@ define Package/$(PKG_NAME)
 	SECTION:=net
 	CATEGORY:=Network
 	TITLE:=TollGate Basic Module
-	DEPENDS:=$(GO_ARCH_DEPENDS)
+	DEPENDS:=$(GO_ARCH_DEPENDS) +nodogsplash +luci
 endef
 
 define Package/$(PKG_NAME)/description
@@ -61,6 +61,22 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/$(PKG_NAME) $(1)/usr/bin/tollgate-basic
 endef
+
+# Update FILES declaration to include NoDogSplash files
+FILES_$(PKG_NAME) += \
+	/usr/bin/tollgate-basic \
+	/etc/init.d/tollgate-basic \
+	/etc/config/firewall-tollgate \
+	/etc/modt/* \
+	/etc/profile \
+	/usr/local/bin/first-login-setup \
+	/etc/uci-defaults/99-tollgate-setup \
+	/etc/uci-defaults/95-random-lan-ip \
+	/etc/nodogsplash/htdocs/*.json \
+	/etc/nodogsplash/htdocs/*.html \
+	/etc/nodogsplash/htdocs/static/css/* \
+	/etc/nodogsplash/htdocs/static/js/* \
+	/etc/nodogsplash/htdocs/static/media/*
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
