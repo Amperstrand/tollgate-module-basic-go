@@ -21,7 +21,9 @@ on:
 
 jobs:
   build-package:
-    runs-on: openwrt/sdk:mediatek-filogic-24.10.0
+    runs-on: ubuntu-latest
+    container:
+      image: openwrt/sdk:mediatek-filogic-24.10.0
 #    env:
 #      MODULE_NAME: "basic"
     steps:
