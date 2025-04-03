@@ -53,8 +53,8 @@ endef
 define Build/Compile
 	cd $(PKG_BUILD_DIR) && \
 	GOOS=linux \
-	GOARCH=$(if $(CONFIG_ARCH_64BIT),arm64,$(if $(CONFIG_TARGET_ath79),mips,arm)) \
-	$(if $(CONFIG_TARGET_ath79),GOMIPS=softfloat,) \
+	GOARCH=$(GOARCH) \
+	$(if $(GOMIPS),GOMIPS=$(GOMIPS)) \
 	go build -o $(PKG_NAME) -trimpath -ldflags="-s -w" 
 endef
 
