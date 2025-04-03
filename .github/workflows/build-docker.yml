@@ -63,29 +63,25 @@ jobs:
           make -j1 package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
-        continue-on-error: true
         run: |
-          ls -R /builder/build_dir | grep ".ipk"
+          PACKAGE_PATH=$(find /builder/bin/packages -name "*.ipk" -type f | head -n1)
+          
+          if [ -z "$PACKAGE_PATH" ]; then
+            echo "❌ No .ipk package found in /builder/bin/packages"
+            exit 1
+          fi
 
-      - name: List output package(s) 2
-        continue-on-error: true
-        run: |
-          ls -R /builder/bin/packages | grep ".ipk"
+          echo "Found package at: $PACKAGE_PATH"
+          echo "PACKAGE_FULLPATH=$PACKAGE_PATH" >> $GITHUB_ENV
 
-#
-#      - name: Debug output
-#        run: |
-#          echo "Attempting to list built package:"
-#          ls -R /tmp/openwrt-sdk/openwrt-sdk-*/bin/packages
-#
-#      - name: Upload Package to Blossom
-#        id: upload_package
-#        uses: c03rad0r/cli-blossom-uploader-go@main
-#        with:
-#          host: "https://blossom.swissdash.site"
-#          filePath: ${{ env.PACKAGE_FULLPATH }}
-#          nostrPrivateKey: ${{ secrets.NSECBECH }}
-#          desiredExtension: ipk
+
+      - name: Upload Package to Blossom
+        uses: c03rad0r/cli-blossom-uploader-go@main
+        with:
+          host: "https://blossom.swissdash.site"
+          filePath: ${{ env.PACKAGE_FULLPATH }}
+          nostrPrivateKey: ${{ secrets.NSECBECH }}
+          desiredExtension: ipk
 #
 #      # Add a step to save the outputs to environment variables
 #      - name: Save Upload Results to Environment
