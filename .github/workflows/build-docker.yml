@@ -6,6 +6,7 @@ on:
 
 ## Add global env vars for the whole workflow
 env:
+  PACKAGE_NAME: "tollgate-module-basic-go"
   GOARCH: "arm64"
   DEBUG: "true"
   # GOMIPS: "softfloat"
@@ -25,17 +26,17 @@ jobs:
   build-package:
     runs-on: ubuntu-latest
     container:
-      image: openwrt/sdk:mediatek-filogic-24.10.0
+      image: openwrt/sdk:mediatek-filogic-24.10.0 # 23.05.3
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
 
     steps:
       - uses: actions/checkout@v3
         with:
-          path: tollgate-module-basic-go/
+          path: ${{ env.PACKAGE_NAME }}/
 
       - name: Move sources to sdk folder
         run: |
-          mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
+          mv ${{ env.PACKAGE_NAME }} /builder/package/${{ env.PACKAGE_NAME }}
 
       - name: Install Golang
         run: |
@@ -54,12 +55,12 @@ jobs:
           make defconfig
 
           # Update configuration for our needs
-          echo "CONFIG_PACKAGE_tollgate-module-basic-go=y" >> .config
+          echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=y" >> .config
           
       - name: Compile Package
         run: |
           cd /builder
-          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} make -j$(nproc) package/tollgate-module-basic-go/compile ${{ env.DEBUG == 'true' && 'V=sc' || '' }}
+          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} make -j$(nproc) package/${{ env.PACKAGE_NAME }}/compile ${{ env.DEBUG == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
         run: |
@@ -73,11 +74,18 @@ jobs:
           echo "✅ Found package at: $PACKAGE_PATH"
           echo "PACKAGE_FULLPATH=$PACKAGE_PATH" >> $GITHUB_ENV
 
-      - name: Upload Package to Blossom
+      - name: Blossom upload package
         uses: Origami74/upload-blossom-action@main
         with:
           host: "https://blossom.swissdash.site"
           filePath: ${{ env.PACKAGE_FULLPATH }}
+
+      - name: GitHub Artifact upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ env.PACKAGE_NAME }}
+          path: ${{ env.PACKAGE_FULLPATH }}
+          retention-days: 5
 
      # Add a step to save the outputs to environment variables
       - name: Save Upload Results to Environment
