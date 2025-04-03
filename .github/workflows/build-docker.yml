@@ -25,15 +25,29 @@ jobs:
     container:
       image: openwrt/sdk:mediatek-filogic-24.10.0
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 #    env:
 #      MODULE_NAME: "basic"
     steps:
       - uses: actions/checkout@v3
+        with:
+          path: ~/package/
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
 
       - name: Test sdk present
         run: |
-          cd /openwrt-sdk
-          make package/tollgate-module-basic-go/compile
+          ls -la
+          ls ~/package/feeds
+          make package/feeds/tollgate-module-basic-go/compile
 #
 #      # Add this early in the job
 #      - name: Set Environment Variables
