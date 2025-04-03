@@ -27,15 +27,13 @@ PKG_USE_MIPS16:=0
 GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 
 include $(INCLUDE_DIR)/package.mk
-$(eval $(call GoPackage)) +nodogsplash +luci
+$(eval $(call GoPackage))
 
 define Package/$(PKG_NAME)
 	SECTION:=net
 	CATEGORY:=Network
 	TITLE:=TollGate Basic Module
-	DEPENDS:=$(GO_ARCH_DEPENDS)# +nodogsplash
-	#PROVIDES:=nodogsplash-htdocs
-	#CONFLICTS:=
+	DEPENDS:=$(GO_ARCH_DEPENDS) +nodogsplash +luci
 endef
 
 define Package/$(PKG_NAME)/description
@@ -131,7 +129,6 @@ FILES_$(PKG_NAME) += \
 	/etc/nodogsplash/htdocs/static/js/* \
 	/etc/nodogsplash/htdocs/static/media/*
 
-#PKG_FLAGS:=overwrite
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
 
