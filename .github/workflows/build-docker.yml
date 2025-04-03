@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          path: package/
+          path: builder/package/
 
       - name: Cache Docker layers
         uses: actions/cache@v3
@@ -46,8 +46,8 @@ jobs:
       - name: Test sdk present
         run: |
           ls /builder
-          ls ~/package/feeds
-          make package/feeds/tollgate-module-basic-go/compile
+          ls /builder/package
+          make /builder/package/tollgate-module-basic-go/compile
 #
 #      # Add this early in the job
 #      - name: Set Environment Variables
