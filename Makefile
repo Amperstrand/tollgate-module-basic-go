@@ -51,10 +51,8 @@ endef
 
 define Build/Compile
 	cd $(PKG_BUILD_DIR) && \
-	GOOS=linux \
-	GOARCH=$(GOARCH) \
-	$(if $(GOMIPS),GOMIPS=$(GOMIPS)) \
-	go build -o $(PKG_NAME) -trimpath -ldflags="-s -w" 
+	echo "Building with GOARCH=$(GOARCH) $(if $(GOMIPS),GOMIPS=$(GOMIPS))" && \
+	env GOOS=linux GOARCH=$(GOARCH) $(if $(GOMIPS)GOMIPS=$(GOMIPS)) go build -o $(PKG_NAME) -trimpath -ldflags="-s -w"
 endef
 
 define Package/$(PKG_NAME)/install
