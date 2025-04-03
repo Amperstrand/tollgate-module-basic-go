@@ -60,7 +60,7 @@ jobs:
         run: |
           echo "\n - Compiling\n"
           cd /builder
-          make -j1 package/tollgate-module-basic-go/compile
+          make -j1 package/tollgate-module-basic-go/compile V=sc
 
 #
 #      # Add this early in the job
