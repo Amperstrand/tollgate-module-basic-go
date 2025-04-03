@@ -25,37 +25,31 @@ jobs:
     container:
       image: openwrt/sdk:mediatek-filogic-24.10.0
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
-      env:
-        TERM: xterm-256color
-        DEBIAN_FRONTEND: noninteractive
+#      env:
+#        TERM: xterm-256color
+#        DEBIAN_FRONTEND: noninteractive
 
-
-    env:
-      GOLANG_PACKAGE_URL: "https://github.com/OpenTollGate/tollgate-sdk/actions/runs/13928706186/artifacts/2774415485"
     steps:
       - uses: actions/checkout@v3
         with:
           path: tollgate-module-basic-go/
 
-      - name: Download prebuilt golang package
-        run: |
-          curl -L ${{ env.GOLANG_PACKAGE_URL }} --create-dirs -o /builder/bin/packages/mediatek/golang.ipk
-
       - name: Move sources to sdk folder
         run: |
           mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
 
-      - name: Configure SDK
+      - name: Install Golang
         run: |
-          echo "\n - Configuring SDK\n"
-          cd /builder
-
           # Add golang-backports repository
-          echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
+          echo "deb https://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
           apt-get update
           
           # Install Go from backports
           apt-get install -y -t bookworm-backports golang-go
+
+      - name: Configure SDK
+        run: |
+          cd /builder
 
           # Generate default configuration
           make defconfig
@@ -63,9 +57,8 @@ jobs:
           # Update configuration for our needs
           echo "CONFIG_PACKAGE_tollgate-module-basic-go=y" >> .config
           
-      - name: Compile
+      - name: Compile Package
         run: |
-          echo "\n - Compiling\n"
           cd /builder
           make -j1 package/tollgate-module-basic-go/compile V=sc
 
