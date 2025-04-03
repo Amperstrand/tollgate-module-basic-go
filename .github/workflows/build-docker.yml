@@ -25,23 +25,13 @@ jobs:
     container:
       image: openwrt/sdk:mediatek-filogic-24.10.0
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
-#      credentials:
-#        username: ${{ github.actor }}
-#        password: ${{ secrets.GITHUB_TOKEN }}
+
 #    env:
 #      MODULE_NAME: "basic"
     steps:
       - uses: actions/checkout@v3
         with:
-          path: builder/package/tollgate-module-basic-go/
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: openwrt/sdk:mediatek-filogic-24.10.0
-          restore-keys: |
-            openwrt/sdk:mediatek-filogic-24.10.0
+          path: tollgate-module-basic-go/
 
       - name: Test sdk present
         run: |
@@ -52,7 +42,12 @@ jobs:
           ls /builder/package
           
           echo "\n- clone dir\n"
-          ls builder/package
+          ls tollgate-module-basic-go
+          
+          mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
+          
+          echo "\n- mv dir\n"
+          ls /builder/package/tollgate-module-basic-go
           
           echo "\n - Compiling\n"
           make /builder/package/tollgate-module-basic-go/compile
