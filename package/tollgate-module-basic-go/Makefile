@@ -63,7 +63,7 @@ define Package/$(PKG_NAME)/install
 	
 	# Init script
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/etc/init.d/tollgate-basic $(1)/etc/init.d/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/files/etc/init.d/tollgate-basic $(1)/etc/init.d/
 endef
 
 # Update FILES declaration to include NoDogSplash files
