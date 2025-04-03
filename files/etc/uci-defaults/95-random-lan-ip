@@ -4,6 +4,37 @@
 # We don't need to check for a flag file since uci-defaults scripts 
 # are automatically run only once after installation or upgrade
 
+# Helper function to safely set UCI values with error handling
+uci_safe_set() {
+    local config="$1"
+    local section="$2"
+    local option="$3"
+    local value="$4"
+    
+    # Check if the config exists
+    if [ ! -f "/etc/config/$config" ]; then
+        echo "Creating config: $config"
+        touch "/etc/config/$config"
+    fi
+    
+    # Check if the section exists
+    if ! uci -q get "$config.$section" >/dev/null 2>&1; then
+        # Section doesn't exist, try to create it
+        if [[ "$section" == *"@"* ]]; then
+            # For array sections like @dnsmasq[0], we need special handling
+            # Extract the section type
+            section_type=$(echo "$section" | cut -d'@' -f2 | cut -d'[' -f1)
+            uci add "$config" "$section_type" >/dev/null 2>&1
+        else
+            # For named sections
+            uci set "$config.$section=" >/dev/null 2>&1
+        fi
+    fi
+    
+    # Now set the option safely
+    uci set "$config.$section.$option=$value" >/dev/null 2>&1
+}
+
 # Initialize random seed
 RANDOM=$$$(date +%s)
 
@@ -48,7 +79,7 @@ RANDOM_IP="$OCTET1.$OCTET2.$OCTET3.1"
 echo "Setting random LAN IP to: $RANDOM_IP"
 
 # Update network config using UCI
-uci set network.lan.ipaddr="$RANDOM_IP"
+uci_safe_set network lan ipaddr "$RANDOM_IP"
 uci commit network
 
 # Update hosts file
@@ -73,12 +104,12 @@ fi
 
 # Also update the default gateway and broadcast address accordingly
 NETMASK="255.255.255.0"  # Using standard /24 subnet
-uci set network.lan.netmask="$NETMASK"
+uci_safe_set network lan netmask "$NETMASK"
  
 # Calculate subnet information for correct operation
 # For a /24 network, the broadcast is always x.y.z.255
 BROADCAST="$OCTET1.$OCTET2.$OCTET3.255"
-uci set network.lan.broadcast="$BROADCAST"
+uci_safe_set network lan broadcast "$BROADCAST"
 
 # No need for a flag file - uci-defaults handles this automatically
 
