@@ -44,7 +44,8 @@ jobs:
       - name: Move sources to sdk folder
         run: |
           mv tollgate-module-basic-go /builder/package/tollgate-module-basic-go
-          
+      
+
       - name: Configure SDK
         run: |
           echo "\n - Configuring SDK\n"
