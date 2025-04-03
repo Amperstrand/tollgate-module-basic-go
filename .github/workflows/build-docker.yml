@@ -39,7 +39,7 @@ jobs:
 
       - name: Download prebuilt golang package
         run: |
-          curl -L ${{ env.GOLANG_PACKAGE_URL }} -o /builder/bin/packages/golang.ipk
+          curl -L ${{ env.GOLANG_PACKAGE_URL }} --create-dirs -o /builder/bin/packages/golang.ipk
 
       - name: Move sources to sdk folder
         run: |
