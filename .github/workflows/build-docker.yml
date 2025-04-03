@@ -60,7 +60,7 @@ jobs:
       - name: Compile Package
         run: |
           cd /builder
-          make -j1 package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}- name: Compile Package
+          make -j1 package/tollgate-module-basic-go/compile ${{ env.debug == 'true' && 'V=sc' || '' }}
 
       - name: List output package(s)
         run: |
