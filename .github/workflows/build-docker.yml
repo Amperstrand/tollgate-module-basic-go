@@ -65,7 +65,7 @@ jobs:
       - name: List output package(s)
         run: |
           cd /builder
-          ls -R /builder/build_dir
+          ls -R /builder/build_dir | grep ".ipk"
 
 #
 #      - name: Debug output
