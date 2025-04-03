@@ -50,6 +50,7 @@ jobs:
           ls /builder/package/tollgate-module-basic-go
           
           echo "\n - Compiling\n"
+          cd /builder
           make /builder/package/tollgate-module-basic-go/compile
 #
 #      # Add this early in the job
