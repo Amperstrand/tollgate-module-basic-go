@@ -32,7 +32,7 @@ jobs:
 
       - name: Test sdk present
         run: |
-          make package/tollgate-module-basic-go/Makefile/compile
+          make package/tollgate-module-basic-go/Build/compile
 #
 #      # Add this early in the job
 #      - name: Set Environment Variables
