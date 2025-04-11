@@ -1,7 +1,9 @@
 package bragging
 
 import (
+    "context"
     "testing"
+
     "github.com/nbd-wtf/go-nostr"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
@@ -39,9 +41,9 @@ func TestTemplateRendering(t *testing.T) {
 func TestRelayPublish(t *testing.T) {
     mockRelay := nostr.NewMockRelay()
     service := &Service{
-    	config:    Config{Relays: []string{"mock_relay"}},
-    	relayPool: nostr.NewSimplePool(context.Background()),
-	}
+        config:    Config{Relays: []string{"mock_relay"}},
+        relayPool: nostr.NewSimplePool(context.Background()),
+    }
     service.relayPool.AddRelay(mockRelay)
 
     event := &nostr.Event{}
