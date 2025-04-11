@@ -3,7 +3,6 @@ package bragging
 import (
     "fmt"
     "github.com/nbd-wtf/go-nostr"
-    "time"
 )
 
 func (s *Service) CreateEvent(saleData map[string]interface{}) (*nostr.Event, error) {
@@ -19,7 +18,7 @@ func (s *Service) CreateEvent(saleData map[string]interface{}) (*nostr.Event, er
     }
 
     // Add standard tags
-    event.Tags = append(event.Tags, nostr.Tag{"p", s.keyPair.PublicKey(), "BraggingTollGate"})
+    event.Tags = append(event.Tags, nostr.Tag{"p", s.publicKey, "BraggingTollGate"})
 
     // Add configured fields
     for _, field := range s.config.Fields {
@@ -28,5 +27,6 @@ func (s *Service) CreateEvent(saleData map[string]interface{}) (*nostr.Event, er
         }
     }
 
-    return event.Sign(s.keyPair.PrivateKey)
+    event.Sign(s.privateKey)
+    return event, nil
 }

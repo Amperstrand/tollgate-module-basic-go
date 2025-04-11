@@ -2,6 +2,7 @@ package bragging
 
 import (
     "bytes"
+    "fmt"
     "log"
     "text/template"
 )

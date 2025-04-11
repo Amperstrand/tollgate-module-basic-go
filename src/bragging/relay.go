@@ -27,8 +27,8 @@ func (s *Service) PublishEvent(event *nostr.Event) error {
                     continue
                 }
 
-                status := relay.Publish(ctx, event)
-                if status != nostr.PublishStatusSucceeded {
+                status := relay.Publish(ctx, *event)
+                if status != nil {
                     log.Printf("Publish failed (attempt %d): %s", attempt, status)
                 } else {
                     return

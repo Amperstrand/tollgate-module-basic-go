@@ -3,12 +3,12 @@ package bragging
 import (
     "context"
     "github.com/nbd-wtf/go-nostr"
-    "log"
 )
 
 type Service struct {
     config    Config
-    keyPair   *nostr.KeyPair
+    publicKey string
+    privateKey string
     relayPool *nostr.SimplePool
 }
 
@@ -21,10 +21,14 @@ type Config struct {
 }
 
 func NewService(config Config, privateKey string) (*Service, error) {
-    keyPair := nostr.KeyPair{PrivateKey: privateKey}
+    pubKey, err := nostr.GetPublicKey(privateKey)
+    if err != nil {
+        return nil, err
+    }
     return &Service{
-        config:    config,
-        keyPair:   &keyPair,
-        relayPool: nostr.NewSimplePool(context.Background()),
+        config:     config,
+        publicKey:  pubKey,
+        privateKey: privateKey,
+        relayPool:  nostr.NewSimplePool(context.Background()),
     }, nil
 }
