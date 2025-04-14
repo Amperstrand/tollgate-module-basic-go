@@ -109,7 +109,7 @@ func decodeCashuToken(token string) (int, error) {
 
 // CollectPayment processes a Cashu token and swaps it for fresh proofs
 // Returns the fresh proofs and token directly
-func CollectPayment(token string, privateKey string, relayPool *nostr.SimplePool) error {
+func CollectPayment(token string, privateKey string, relayPool *nostr.SimplePool, relays []string) error {
 	// Extract proofs from token and process them
 	proofs, tokenMint, err := nip60.GetProofsAndMint(token)
 	if err != nil {
