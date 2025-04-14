@@ -87,13 +87,24 @@ func init() {
 
 // loadConfig reads configuration from /etc/tollgate/config.json
 func loadConfig() error {
-	// Set default values
-	config = Config{
-		TollgatePrivateKey: "8a45d0add1c7ddf668f9818df550edfa907ae8ea59d6581a4ca07473d468d663",
-		AcceptedMint:       "https://testnut.cashu.space",
-		PricePerMinute:     1,
-		MinPayment:         1,
-		MintFee:            1,
+	// Only set default values if config file doesn't exist
+	var config Config
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		config = Config{
+			TollgatePrivateKey: "8a45d0add1c7ddf668f9818df550edfa907ae8ea59d6581a4ca07473d468d663",
+			AcceptedMint:       "",
+			PricePerMinute:     1,
+			MinPayment:         1,
+			MintFee:            1,
+		}
+	} else {
+		data, err := os.ReadFile(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to read config file: %v", err)
+		}
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("failed to parse config file: %v", err)
+		}
 	}
 	
 	// Create the config directory if it doesn't exist
