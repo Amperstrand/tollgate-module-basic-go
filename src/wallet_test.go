@@ -20,7 +20,8 @@ func TestCollectPayment(t *testing.T) {
 	privateKey := "test_private_key"
 	relayPool := nostr.NewSimplePool(context.Background())
 
-	err := CollectPayment(token, privateKey, relayPool)
+	relays := []string{"wss://relay.damus.io"}
+	err := CollectPayment(token, privateKey, relayPool, relays)
 	if err == nil {
 		t.Errorf("CollectPayment should fail for invalid token and private key")
 	}

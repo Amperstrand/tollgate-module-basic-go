@@ -308,6 +308,7 @@ func handleRootPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process and swap the token for fresh proofs - only if value is sufficient
+	log.Printf("Relays being passed to CollectPayment: %v", config.Relays)
 	swapError := CollectPayment(paymentToken, tollgatePrivateKey, relayPool, config.Relays)
 	if swapError != nil {
 		log.Printf("Error swapping token: %v", swapError)
