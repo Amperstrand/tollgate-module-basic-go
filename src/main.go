@@ -110,8 +110,8 @@ func loadConfig() error {
 	}
 	
 	// Create the config directory if it doesn't exist
-	configDir := "/etc/tollgate"
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	configDir = "/etc/tollgate"
+	if err = os.MkdirAll(configDir, 0755); err != nil {
 		log.Printf("WARNING: Failed to create config directory: %v", err)
 		// Continue with default values
 	}
