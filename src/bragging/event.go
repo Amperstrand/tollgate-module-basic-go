@@ -2,6 +2,7 @@
 
 import (
     "fmt"
+    "strings"
     "github.com/nbd-wtf/go-nostr"
 )
 
