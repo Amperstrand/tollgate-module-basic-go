@@ -83,4 +83,5 @@ func TestRelayPublish(t *testing.T) {
     require.NoError(t, err)
     require.NotEmpty(t, events, "event not found on relay")
     assert.Equal(t, event.ID, events[0].ID)
+    t.Logf("Fetched event from relay: %+v", events[0])
 }
