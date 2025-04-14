@@ -87,6 +87,8 @@ func init() {
 
 // loadConfig reads configuration from /etc/tollgate/config.json
 func loadConfig() error {
+	configDir := "/etc/tollgate"
+	configFile := configDir + "/config.json"
 	// Only set default values if config file doesn't exist
 	var config Config
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
