@@ -11,7 +11,13 @@ import (
 )
 
 func TestEventCreation(t *testing.T) {
-    config := Config{Enabled: true, UserOptIn: true, Fields: []string{"amount", "mint", "duration"}, Template: "New sale! {{.amount}} sats via {{.mint}} for {{.duration}} sec"}
+    config := Config{
+        Enabled:    true,
+        UserOptIn:  true,
+        Fields:     []string{"amount", "mint", "duration"},
+        Template:   "New sale! {{.amount}} sats via {{.mint}} for {{.duration}} sec",
+        Relays:     []string{"wss://relay.damus.io"},
+    }
     privateKey := nostr.GeneratePrivateKey()
     service, err := NewService(config, privateKey)
     require.NoError(t, err)
@@ -24,9 +30,11 @@ func TestEventCreation(t *testing.T) {
 
     event, err := service.CreateEvent(saleData)
     require.NoError(t, err)
-    assert.Equal(t, 13111, event.Kind)
-    assert.Contains(t, event.Content, "New sale! 150 sats via https://mint.example for 900 sec")
-    assert.Len(t, event.Tags, 4) // incl. p, amount, mint, duration
+    assert.Equal(t, 1, event.Kind)
+    assert.Contains(t, event.Content, "Amount: 150 sats")
+    assert.Contains(t, event.Content, "Mint: https://mint.example")
+    assert.Contains(t, event.Content, "Duration: 900 seconds")
+    assert.Len(t, event.Tags, 3) // amount, mint, duration
 }
 
 func TestTemplateRendering(t *testing.T) {
