@@ -18,12 +18,20 @@ import (
 
 // Config structure to hold all configuration parameters
 type Config struct {
-	TollgatePrivateKey string `json:"tollgate_private_key"`
-	AcceptedMint       string `json:"accepted_mint"`
-	PricePerMinute     int    `json:"price_per_minute"`
-	MinPayment         int    `json:"min_payment"`
-	MintFee            int    `json:"mint_fee"`
-	// You can add more parameters here as needed
+TollgatePrivateKey string `json:"tollgate_private_key"`
+AcceptedMint string `json:"accepted_mint"`
+PricePerMinute int `json:"price_per_minute"`
+MinPayment int `json:"min_payment"`
+MintFee int `json:"mint_fee"`
+Bragging BraggingConfig `json:"bragging"`
+}
+
+type BraggingConfig struct {
+Enabled bool `json:"enabled"`
+Relays []string `json:"relays"`
+Fields []string `json:"fields"`
+Template string `json:"template"`
+UserOptIn bool `json:"user_opt_in"`
 }
 
 // Global configuration variable
@@ -338,24 +346,36 @@ func handleRootPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func announceSuccessfulPayment(macAddress string, durationSeconds int64) error {
+    if !config.Bragging.Enabled {
+        log.Println("Bragging is disabled in configuration")
+        return nil
+    }
+
     // Create a service instance for bragging
-    config := bragging.Config{
-        Enabled: true,
-        UserOptIn: true,
-        Fields: []string{"amount", "mint", "duration"},
-        Template: "New sale! {{.amount}} sats via {{.mint}} for {{.duration}} sec",
+    braggingConfig := bragging.Config{
+        Enabled: config.Bragging.Enabled,
+        Relays: config.Bragging.Relays,
+        Fields: config.Bragging.Fields,
+        Template: config.Bragging.Template,
+        UserOptIn: config.Bragging.UserOptIn,
     }
     privateKey := tollgatePrivateKey
-    service, err := bragging.NewService(config, privateKey)
+    service, err := bragging.NewService(braggingConfig, privateKey)
     if err != nil {
         return err
     }
 
     // Prepare sale data
-    saleData := map[string]interface{}{
-        "amount":   minPayment, // Using minPayment as the amount
-        "mint":     acceptedMint,
-        "duration": durationSeconds,
+    saleData := make(map[string]interface{})
+    for _, field := range config.Bragging.Fields {
+        switch field {
+        case "amount":
+            saleData["amount"] = minPayment
+        case "mint":
+            saleData["mint"] = acceptedMint
+        case "duration":
+            saleData["duration"] = durationSeconds
+        }
     }
 
     // Create event
