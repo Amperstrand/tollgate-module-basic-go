@@ -108,8 +108,8 @@ func loadConfig() error {
 		if err := json.Unmarshal(data, &config); err != nil {
 			return fmt.Errorf("failed to parse config file: %v", err)
 		}
+		log.Printf("Relays loaded from config: %v", config.Relays)
 	}
-	
 	// Create the config directory if it doesn't exist
 	fixedConfigDir := "/etc/tollgate"
 	if err := os.MkdirAll(fixedConfigDir, 0755); err != nil {
