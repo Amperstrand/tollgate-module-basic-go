@@ -36,11 +36,13 @@ jobs:
           # Install Go from backports
           apt-get install -y -t bookworm-backports golang-go
 
+:start_line:41
+:end_line:43
+-------
       - name: Run Go Tests
         run: |
           cd /builder/package/${{ env.PACKAGE_NAME }}/src
-          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} go test -c -o /dev/null ./bragging
-          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} go test ./...
+          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} go test -v ./...
 
       - name: Configure SDK
         run: |
