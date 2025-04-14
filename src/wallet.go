@@ -119,7 +119,7 @@ func CollectPayment(token string, privateKey string, relayPool *nostr.SimplePool
 
 	log.Printf("Successfully decoded token from mint %s", tokenMint)
 
-	if tokenMint != acceptedMint {
+	if !strings.EqualFold(tokenMint, acceptedMint) {
 		return fmt.Errorf("token mint %s is not accepted", tokenMint)
 	}
 
