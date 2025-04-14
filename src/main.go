@@ -116,7 +116,7 @@ func loadConfig() error {
 		// Continue with default values
 	}
 	
-	configFile := fixedConfigDir + "/config.json"
+	configFile = fixedConfigDir + "/config.json"
 	
 	// Check if the config file exists
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
