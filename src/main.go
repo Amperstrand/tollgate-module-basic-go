@@ -193,12 +193,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Println("mac", mac)
-	fmt.Fprintf(w, "mac="+mac)
+	fmt.Fprint(w, "mac=", mac)
 }
 
 func handleDetails(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Details requested")
-	fmt.Fprintf(w, tollgateDetailsString)
+	fmt.Fprint(w, tollgateDetailsString)
 }
 
 // handleRootPost handles POST requests to the root endpoint
