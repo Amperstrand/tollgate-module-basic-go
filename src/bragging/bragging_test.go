@@ -3,6 +3,7 @@ package bragging
 import (
     "context"
     "testing"
+    "time"
 
     "github.com/nbd-wtf/go-nostr"
     "github.com/stretchr/testify/assert"
@@ -59,12 +60,27 @@ func TestRelayPublish(t *testing.T) {
     publicKey, err := nostr.GetPublicKey(privateKey)
     require.NoError(t, err)
     t.Logf("Public Key: %s", publicKey)
+    t.Logf("Signer nsec: %s", privateKey)
 
     event.Sign(privateKey)
     t.Logf("Event ID: %s", event.ID)
 
-    err = service.PublishEvent(event)
 
-    assert.NoError(t, err)
-    // Note: Checking event reception on the relay is not straightforward without additional relay-specific logic
+    err = service.PublishEvent(event)
+    t.Logf("Published event to relay: %s", relayURL)
+    require.NoError(t, err)
+
+    // Fetch the event from the relay to verify it's stored
+    filter := nostr.Filter{
+        IDs: []string{event.ID},
+    }
+    relay, err := service.relayPool.EnsureRelay(relayURL)
+    require.NoError(t, err)
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+    defer cancel()
+    events, err := relay.QuerySync(ctx, filter)
+    require.NoError(t, err)
+    require.NotEmpty(t, events, "event not found on relay")
+    assert.Equal(t, event.ID, events[0].ID)
 }
