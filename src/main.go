@@ -23,6 +23,7 @@ AcceptedMint string `json:"accepted_mint"`
 PricePerMinute int `json:"price_per_minute"`
 MinPayment int `json:"min_payment"`
 MintFee int `json:"mint_fee"`
+Relays []string `json:"relays"`
 Bragging BraggingConfig `json:"bragging"`
 }
 
