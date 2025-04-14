@@ -51,7 +51,7 @@ func TestRelayPublish(t *testing.T) {
     }
 
     event := &nostr.Event{
-        Kind:      13111,
+        Kind:      1,
         CreatedAt: nostr.Now(),
         Tags:      make(nostr.Tags, 0),
         Content:   "Test event",
