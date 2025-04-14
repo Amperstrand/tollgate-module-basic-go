@@ -337,6 +337,43 @@ func handleRootPost(w http.ResponseWriter, r *http.Request) {
 		allottedMinutes, valueAfterFees, 2*mintFee)
 }
 
+func announceSuccessfulPayment(macAddress string, durationSeconds int64) error {
+    // Create a service instance for bragging
+    config := bragging.Config{
+        Enabled: true,
+        UserOptIn: true,
+        Fields: []string{"amount", "mint", "duration"},
+        Template: "New sale! {{.amount}} sats via {{.mint}} for {{.duration}} sec",
+    }
+    privateKey := tollgatePrivateKey
+    service, err := bragging.NewService(config, privateKey)
+    if err != nil {
+        return err
+    }
+
+    // Prepare sale data
+    saleData := map[string]interface{}{
+        "amount":   minPayment, // Using minPayment as the amount
+        "mint":     acceptedMint,
+        "duration": durationSeconds,
+    }
+
+    // Create event
+    event, err := service.CreateEvent(saleData)
+    if err != nil {
+        return err
+    }
+
+    // Publish event
+    err = service.PublishEvent(event)
+    if err != nil {
+        return err
+    }
+
+    log.Printf("Successfully announced payment for MAC %s", macAddress)
+    return nil
+}
+
 // handleRoot routes requests based on method
 func handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
