@@ -8,7 +8,5 @@
         "enabled": true,
         "relays": ["wss://relay.damus.io", "wss://nostr.mom"],
         "fields": ["amount", "mint", "duration"],
-        "template": "New sale! {amount} sats via {mint} for {duration} sec",
-        "user_opt_in": false
     }
 }

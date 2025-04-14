@@ -30,8 +30,6 @@ type BraggingConfig struct {
 Enabled bool `json:"enabled"`
 Relays []string `json:"relays"`
 Fields []string `json:"fields"`
-Template string `json:"template"`
-UserOptIn bool `json:"user_opt_in"`
 }
 
 // Global configuration variable
@@ -351,41 +349,57 @@ func announceSuccessfulPayment(macAddress string, durationSeconds int64) error {
         return nil
     }
 
-    // Create a service instance for bragging
-    braggingConfig := bragging.Config{
-        Enabled: config.Bragging.Enabled,
-        Relays: config.Bragging.Relays,
-        Fields: config.Bragging.Fields,
-        Template: config.Bragging.Template,
-        UserOptIn: config.Bragging.UserOptIn,
-    }
     privateKey := tollgatePrivateKey
-    service, err := bragging.NewService(braggingConfig, privateKey)
-    if err != nil {
-        return err
+    event := nostr.Event{
+        Kind:      1,
+        CreatedAt: nostr.Now(),
+        Tags:      make(nostr.Tags, 0),
+        Content:   "",
     }
 
-    // Prepare sale data
-    saleData := make(map[string]interface{})
+    var content string
     for _, field := range config.Bragging.Fields {
         switch field {
         case "amount":
-            saleData["amount"] = minPayment
+            event.Tags = append(event.Tags, nostr.Tag{"amount", fmt.Sprintf("%d", minPayment)})
+            content += fmt.Sprintf("Amount: %d sats, ", minPayment)
         case "mint":
-            saleData["mint"] = acceptedMint
+            event.Tags = append(event.Tags, nostr.Tag{"mint", acceptedMint})
+            content += fmt.Sprintf("Mint: %s, ", acceptedMint)
         case "duration":
-            saleData["duration"] = durationSeconds
+            event.Tags = append(event.Tags, nostr.Tag{"duration", fmt.Sprintf("%d", durationSeconds)})
+            content += fmt.Sprintf("Duration: %d seconds", durationSeconds)
         }
     }
 
-    // Create event
-    event, err := service.CreateEvent(saleData)
+    // Trim the trailing comma and space if content is not empty
+    if content != "" {
+        content = strings.TrimSuffix(content, ", ")
+    }
+
+    event.Content = content
+
+    err := event.Sign(privateKey)
     if err != nil {
         return err
     }
 
-    // Publish event
-    err = service.PublishEvent(event)
+    relayPool := nostr.NewSimplePool(context.Background())
+    for _, relayURL := range config.Bragging.Relays {
+        relay, err := relayPool.EnsureRelay(relayURL)
+        if err != nil {
+            log.Printf("Failed to connect to relay %s: %v", relayURL, err)
+            continue
+        }
+        err = relay.Publish(context.Background(), event)
+        if err != nil {
+            log.Printf("Failed to publish event to relay %s: %v", relayURL, err)
+        } else {
+            log.Printf("Successfully published event to relay %s", relayURL)
+        }
+    }
+
+    log.Printf("Successfully announced payment for MAC %s", macAddress)
     if err != nil {
         return err
     }
