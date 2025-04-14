@@ -252,7 +252,7 @@ func Payout(address string, amount int, wallet *nip60.Wallet, swapCtx context.Co
 		return swapErr
 	}
 
-	log.Printf("Successfully swapped for fresh proofs, new token: %s", freshProofs)
+	log.Printf("Successfully swapped for fresh proofs, new proofs: %+v", freshProofs)
 
 	// Create a token with the fresh proofs
 	freshToken := nip60.MakeTokenString(freshProofs, tokenMint)
