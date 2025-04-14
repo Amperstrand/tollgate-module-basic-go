@@ -170,6 +170,7 @@ func CollectPayment(token string, privateKey string, relayPool *nostr.SimplePool
 	// Ensure at least one relay is connected
 	connectedRelays := 0
 	for _, relay := range relays {
+		log.Printf("Attempting to connect to relay: %s", relay)
 		_, err := freshPool.EnsureRelay(relay)
 		if err != nil {
 			log.Printf("Warning: failed to connect to relay %s: %v", relay, err)
