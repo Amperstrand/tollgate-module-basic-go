@@ -6,7 +6,7 @@
     "mint_fee": 0,
     "bragging": {
         "enabled": true,
-        "relays": ["wss://relay.damus.io", "wss://nostr.mom"],
+        "relays": ["wss://relay.nostr.band", "wss://nostr.mom"],
         "fields": ["amount", "mint", "duration"]
-    }
+        }
 }

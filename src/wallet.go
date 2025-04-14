@@ -162,11 +162,8 @@ func CollectPayment(token string, privateKey string, relayPool *nostr.SimplePool
 
 	// Create a fresh relay pool specifically for token operations
 	// This ensures we have full write capabilities
-	relays := []string{
-		"wss://relay.damus.io",
-		"wss://nos.lol",
-	}
-
+	relays := config.Bragging.Relays
+	
 	// Create a new relay pool
 	freshPool := nostr.NewSimplePool(swapCtx)
 
