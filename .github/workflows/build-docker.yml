@@ -36,6 +36,11 @@ jobs:
           # Install Go from backports
           apt-get install -y -t bookworm-backports golang-go
 
+      - name: Run Go Tests
+        run: |
+          cd /builder/package/${{ env.PACKAGE_NAME }}/src
+          go test ./...
+
       - name: Configure SDK
         run: |
           cd /builder
