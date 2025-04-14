@@ -7,6 +7,6 @@
     "bragging": {
         "enabled": true,
         "relays": ["wss://relay.damus.io", "wss://nostr.mom"],
-        "fields": ["amount", "mint", "duration"],
+        "fields": ["amount", "mint", "duration"]
     }
 }
