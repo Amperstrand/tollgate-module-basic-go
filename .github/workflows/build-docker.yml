@@ -225,11 +225,3 @@ jobs:
           echo "✅ Package successfully built and published"
           echo "Binary URL: ${{ steps.upload_binary.outputs.blossomUrl }}"
           echo "Package URL: ${{ steps.upload_package.outputs.blossomUrl }}"
-
-      #- name: Trigger OS Workflow
-      #  uses: peter-evans/repository-dispatch@v2
-      #  with:
-      #    token: ${{ secrets.REPO_ACCESS_TOKEN }}
-      #    repository: OpenTollGate/tollgate-os
-      #    event-type: update-release-json
-
