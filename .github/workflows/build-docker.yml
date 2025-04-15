@@ -3,20 +3,35 @@ name: Build and Publish
 on:
   push:
 
-## Add global env vars for the whole workflow
-env:
-  PACKAGE_NAME: "tollgate-module-basic-go"
-  ARCHITECTURE: "aarch64"
-  GOARCH: "arm64"
-#  DEBUG: "true"
-  # GOMIPS: "softfloat"
-
 jobs:
   build-package:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - name: "GL-MT3000"
+            sdk_image: "openwrt/sdk:mediatek-filogic-23.05.3"
+            arch: "aarch64"
+            goarch: "arm64"
+            device: "gl-mt3000"
+          - name: "GL-MT6000"
+            sdk_image: "openwrt/sdk:mediatek-filogic-23.05.3"
+            arch: "aarch64" 
+            goarch: "arm64"
+            device: "gl-mt6000"
+          # You can add more targets here as needed
+    
     container:
-      image: openwrt/sdk:mediatek-filogic-23.05.3
+      image: ${{ matrix.target.sdk_image }}
       options: --user root # https://github.com/actions/checkout/issues/1575#issuecomment-2536435128
+
+    env:
+      PACKAGE_NAME: "tollgate-module-basic-go"
+      ARCHITECTURE: ${{ matrix.target.arch }}
+      GOARCH: ${{ matrix.target.goarch }}
+      DEVICE: ${{ matrix.target.device }}
+      # DEBUG: "true"
+      # GOMIPS: "softfloat"
 
     steps:
       - uses: actions/checkout@v3
@@ -73,19 +88,31 @@ jobs:
       - name: GitHub Artifact upload
         uses: actions/upload-artifact@v4
         with:
-          name: package-${{ env.PACKAGE_NAME }}
+          name: package-${{ env.PACKAGE_NAME }}-${{ matrix.target.name }}
           path: /github/workspace/artifacts/${{ env.PACKAGE_FILENAME }}
           retention-days: 5
   
   publish-metadata:
     needs: build-package
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - name: "GL-MT3000"
+            device: "gl-mt3000"
+          - name: "GL-MT6000"
+            device: "gl-mt6000"
+          # Keep this in sync with the build-package matrix
+    
+    env:
+      PACKAGE_NAME: "tollgate-module-basic-go"
+      DEVICE: ${{ matrix.target.device }}
     
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: package-${{ env.PACKAGE_NAME }}
+          name: package-${{ env.PACKAGE_NAME }}-${{ matrix.target.name }}
           path: ./artifacts
       
       - name: Prepare package metadata
@@ -107,7 +134,7 @@ jobs:
           echo "PACKAGE_PATH=$PACKAGE_PATH" >> $GITHUB_ENV
           echo "PACKAGE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
           echo "MODEL=$MODEL" >> $GITHUB_ENV
-          echo "PACKAGE_FILENAME=${{ env.PACKAGE_NAME }}-${MODEL}-${{ env.GOARCH }}.ipk" >> $GITHUB_ENV
+          echo "PACKAGE_FILENAME=${{ env.PACKAGE_NAME }}-${MODEL}-${{ matrix.target.name }}.ipk" >> $GITHUB_ENV
 
       - name: Blossom Artifact upload
         id: blossom_upload
@@ -164,7 +191,6 @@ jobs:
           echo "SHORT_MODULE=$SHORT_MODULE" >> $GITHUB_ENV
           
           # Create a standardized filename for the package
-          DEVICE="gl-mt3000"  # You might want to make this dynamic
           PACKAGE_SHORT_FILENAME="${SHORT_MODULE}-${DEVICE}-${MODEL}.ipk"
           echo "PACKAGE_SHORT_FILENAME=$PACKAGE_SHORT_FILENAME" >> $GITHUB_ENV
           
@@ -223,10 +249,10 @@ jobs:
           echo "Build Summary for ${{ matrix.target.name }}:"
           echo "✅ Binary successfully built and published"
           echo "✅ Package successfully built and published"
-          echo "Binary URL: ${{ steps.upload_binary.outputs.blossomUrl }}"
-          echo "Package URL: ${{ steps.upload_package.outputs.blossomUrl }}"
+          echo "Package URL: ${{ steps.blossom_upload.outputs.url }}"
 
       - name: Trigger OS Workflow
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.REPO_ACCESS_TOKEN }}
