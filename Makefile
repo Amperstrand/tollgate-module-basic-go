@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tollgate-module-basic-go
-PKG_VERSION:=$(shell git rev-list --count HEAD 2>/dev/null || echo "0.0.1").$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+PKG_VERSION:=0.1.0
 PKG_RELEASE:=1
 PKG_FLAGS:=overwrite
 
@@ -10,7 +10,7 @@ ifneq ($(TOPDIR),)
 	# Feed-specific settings (auto-clone from git)
 	PKG_SOURCE_PROTO:=git
 	PKG_SOURCE_URL:=https://github.com/OpenTollGate/tollgate-module-basic-go.git
-	PKG_SOURCE_VERSION:=$(shell git rev-parse HEAD) # Use exact current commit
+	PKG_SOURCE_VERSION:=main  # Use main branch instead of specific commit
 	PKG_MIRROR_HASH:=skip
 else
 	# SDK build context (local files)
@@ -44,10 +44,19 @@ define Package/$(PKG_NAME)/description
 	TollGate Basic Module for OpenWrt
 endef
 
+# Add debug information
 define Build/Prepare
+	@echo "=============== DEBUG INFO ==============="
+	@echo "Current working directory: $$(pwd)"
+	@echo "PKG_BUILD_DIR: $(PKG_BUILD_DIR)"
+	@echo "PKG_SOURCE_VERSION: $(PKG_SOURCE_VERSION)"
+	@echo "=========================================="
+	
 	$(call Build/Prepare/Default)
-	echo "DEBUG: Contents of go.mod after prepare:"
-	cat $(PKG_BUILD_DIR)/go.mod
+	@echo "Contents of build dir after prepare:"
+	@ls -la $(PKG_BUILD_DIR)
+	@echo "Contents of go.mod after prepare:"
+	@cat $(PKG_BUILD_DIR)/go.mod 2>/dev/null || echo "go.mod not found"
 endef
 
 define Build/Configure

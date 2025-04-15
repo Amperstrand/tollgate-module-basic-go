@@ -30,13 +30,30 @@ jobs:
       ARCHITECTURE: ${{ matrix.target.arch }}
       GOARCH: ${{ matrix.target.goarch }}
       DEVICE: ${{ matrix.target.device }}
-      # DEBUG: "true"
+      DEBUG: "true"
       # GOMIPS: "softfloat"
 
     steps:
       - uses: actions/checkout@v3
         with:
           path: ${{ env.PACKAGE_NAME }}/
+          fetch-depth: 0 # Fetch all history for proper versioning
+
+      - name: Debug Git Info
+        run: |
+          echo "Git status in the checkout directory:"
+          cd ${{ env.PACKAGE_NAME }}/
+          git status
+          echo "Current branch: $(git branch --show-current)"
+          echo "Current commit: $(git rev-parse HEAD)"
+          
+      - name: Modify Makefile for CI/CD environment
+        run: |
+          # Ensure we're using 'main' branch instead of specific commit in Makefile
+          cd ${{ env.PACKAGE_NAME }}/
+          sed -i 's/PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=main/' Makefile
+          echo "Modified Makefile contents:"
+          cat Makefile | grep -A 3 PKG_SOURCE_VERSION
 
       - name: Move sources to sdk folder
         run: |
@@ -62,16 +79,35 @@ jobs:
           echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=y" >> .config
           
       - name: Compile Package
+        id: compile
         run: |
           cd /builder
-          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} make -j$(nproc) V=sc package/${{ env.PACKAGE_NAME }}/compile ${{ env.DEBUG == 'true' && 'V=sc' || '' }}
+          echo "Starting compilation with GOARCH=${{ env.GOARCH }}..."
+          env GOARCH=${{ env.GOARCH }} GOMIPS=${{ env.GOMIPS }} make -j$(nproc) V=sc package/${{ env.PACKAGE_NAME }}/compile || {
+            echo "::error::Build failed, checking package directory"
+            echo "Contents of package directory:"
+            ls -la /builder/package/${{ env.PACKAGE_NAME }}
+            echo "Contents of dl directory:"
+            ls -la /builder/dl/ || echo "No dl directory"
+            exit 1
+          }
 
       - name: List output package(s)
+        if: ${{ !cancelled() }}
         run: |
+          echo "Searching for output packages..."
+          find /builder/bin -type f -name "*.ipk" || echo "No .ipk files found in /builder/bin"
+          
+          # Look in specific packages directory
           PACKAGE_PATH=$(find /builder/bin/packages -name "*.ipk" -type f | head -n1)
           
+          # If not found, look in targets directory
           if [ -z "$PACKAGE_PATH" ]; then
-            echo "❌ No .ipk package found in /builder/bin/packages"
+            PACKAGE_PATH=$(find /builder/bin/targets -name "*.ipk" -type f | head -n1)
+          fi
+          
+          if [ -z "$PACKAGE_PATH" ]; then
+            echo "❌ No .ipk package found in /builder/bin"
             exit 1
           fi
 
@@ -86,6 +122,7 @@ jobs:
           cp "$PACKAGE_PATH" "/github/workspace/artifacts/$FILENAME"
 
       - name: GitHub Artifact upload
+        if: ${{ !cancelled() && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: package-${{ env.PACKAGE_NAME }}-${{ matrix.target.name }}
