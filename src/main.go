@@ -88,77 +88,57 @@ func init() {
 
 // loadConfig reads configuration from /etc/tollgate/config.json
 func loadConfig() error {
-	configDir := "/etc/tollgate"
-	configFile := configDir + "/config.json"
-	// Only set default values if config file doesn't exist
-	var config Config
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		config = Config{
-			TollgatePrivateKey: "8a45d0add1c7ddf668f9818df550edfa907ae8ea59d6581a4ca07473d468d663",
-			AcceptedMint:       "",
-			PricePerMinute:     1,
-			MinPayment:         1,
-			MintFee:            1,
-		}
-	} else {
-		data, err := os.ReadFile(configFile)
-		if err != nil {
+	configFile := "/etc/tollgate/config.json"
+
+	// Read the existing config file
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Create a default config if it doesn't exist
+			config := Config{
+				TollgatePrivateKey: "8a45d0add1c7ddf668f9818df550edfa907ae8ea59d6581a4ca07473d468d663",
+				AcceptedMint:       "",
+				PricePerMinute:     1,
+				MinPayment:         1,
+				MintFee:            1,
+			}
+			defaultConfig, err := json.MarshalIndent(config, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal default config: %v", err)
+			}
+			err = os.MkdirAll("/etc/tollgate", 0755)
+			if err != nil {
+				log.Printf("WARNING: Failed to create config directory: %v", err)
+			}
+			err = os.WriteFile(configFile, defaultConfig, 0644)
+			if err != nil {
+				log.Printf("WARNING: Failed to write default config file: %v", err)
+			}
+			data = defaultConfig
+		} else {
 			return fmt.Errorf("failed to read config file: %v", err)
 		}
-		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("failed to parse config file: %v", err)
-		}
-		log.Printf("Relays loaded from config: %v", config.Relays)
 	}
-	// Create the config directory if it doesn't exist
-	fixedConfigDir := "/etc/tollgate"
-	if err := os.MkdirAll(fixedConfigDir, 0755); err != nil {
-		log.Printf("WARNING: Failed to create config directory: %v", err)
-		// Continue with default values
+
+	// Parse the config file
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse config file: %v", err)
 	}
-	
-	configFile = fixedConfigDir + "/config.json"
-	
-	// Check if the config file exists
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		// Create a default config file
-		log.Printf("Config file not found, creating default at: %s", configFile)
-		defaultConfig, err := json.MarshalIndent(config, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal default config: %v", err)
-		}
-		
-		if err := os.WriteFile(configFile, defaultConfig, 0644); err != nil {
-			log.Printf("WARNING: Failed to write default config file: %v", err)
-			// Continue with default values
-		}
-	} else {
-		// Read the existing config file
-		data, err := os.ReadFile(configFile)
-		if err != nil {
-			log.Printf("WARNING: Failed to read config file: %v", err)
-			// Continue with default values
-		} else {
-			// Parse the config file
-			if err := json.Unmarshal(data, &config); err != nil {
-				log.Printf("WARNING: Failed to parse config file: %v", err)
-				// Continue with default values
-			}
-		}
-	}
-	
-	// Update derived values
+
+	log.Printf("Relays loaded from config: %v", config.Relays)
+
+	// Update global variables
 	tollgatePrivateKey = config.TollgatePrivateKey
 	acceptedMint = config.AcceptedMint
 	pricePerMinute = config.PricePerMinute
 	minPayment = config.MinPayment
 	mintFee = config.MintFee
-	// first mint fee for the payment and second fee for consolidation transaction
 	cutoffFee = 2*mintFee + minPayment
-	
-	log.Printf("Configuration loaded: mint=%s, price=%d, fee=%d", 
+
+	log.Printf("Configuration loaded: mint=%s, price=%d, fee=%d",
 		acceptedMint, pricePerMinute, mintFee)
-	
+
 	return nil
 }
 
