@@ -1,16 +1,16 @@
 package main
 
 import (
-	"context"
-	"crypto/tls"
+	"context" // Added for context.Background()
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,7 +19,6 @@ import (
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/cli"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/merchant"
-	merchant_types "github.com/OpenTollGate/tollgate-module-basic-go/src/merchant_types"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/upstream_detector"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/upstream_session_manager"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/wireless_gateway_manager"
@@ -44,54 +43,8 @@ var (
 var upstreamManager *wireless_gateway_manager.UpstreamManager
 
 var tollgateDetailsString string
-
-var (
-	merchantProvider *merchantTypesProvider
-)
-
+var merchantInstance merchant.MerchantInterface
 var cliServer *cli.CLIServer
-
-type merchantTypesProvider struct {
-	inner *merchant.MutexMerchantProvider
-}
-
-func (p *merchantTypesProvider) GetMerchant() merchant_types.PaymentMerchant {
-	return p.inner.GetMerchant()
-}
-
-func swapMerchant(newMerchant merchant_types.PaymentMerchant) {
-	if mi, ok := newMerchant.(merchant.MerchantInterface); ok {
-		merchantProvider.inner.SetMerchant(mi)
-	} else {
-		mainLogger.Error("swapMerchant: cannot convert PaymentMerchant to MerchantInterface")
-	}
-}
-
-func registerReachableSetChangedCallback(m merchant.MerchantInterface) {
-	m.SetOnReachableSetChanged(func() {
-		mainLogger.Info("Reachable mint set changed — rebuilding merchant")
-		current := merchantProvider.inner.GetMerchant()
-		full, ok := current.(*merchant.Merchant)
-		if !ok {
-			return
-		}
-		reachableMints := full.GetMintHealthTracker().GetReachableMintConfigs()
-		if len(reachableMints) > 0 {
-			return
-		}
-		mainLogger.Warn("All mints unreachable — downgrading to degraded mode")
-		if err := full.Shutdown(); err != nil {
-			mainLogger.WithError(err).Error("Failed to shutdown merchant before downgrade")
-		}
-		deg := merchant.NewMerchantDegradedFromFull(configManager, full.GetMintHealthTracker())
-		deg.OnUpgrade(func(upgraded merchant.MerchantInterface) {
-			mainLogger.Info("Upgrading from degraded to full merchant after recovery")
-			swapMerchant(upgraded)
-			registerReachableSetChangedCallback(upgraded)
-		})
-		swapMerchant(deg)
-	})
-}
 
 // getTollgatePaths returns the configuration file paths based on the environment.
 // If TOLLGATE_TEST_CONFIG_DIR is set, it uses paths within that directory for testing.
@@ -130,20 +83,6 @@ func InitializeGlobalLogger(logLevel string) {
 }
 
 func init() {
-	http.DefaultTransport = &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: 10 * time.Second,
-		}).DialContext,
-		DisableKeepAlives:     true,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout:   20 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		ForceAttemptHTTP2:     false,
-	}
-	http.DefaultClient.Timeout = 30 * time.Second
-
 	var err error
 
 	configPath, installPath, identitiesPath := getTollgatePaths()
@@ -168,22 +107,12 @@ func init() {
 	mainLogger.WithField("ip_randomized", installConfig.IPAddressRandomized).Info("Configuration loaded")
 
 	var err2 error
-	merchantInstance, err2 := merchant.New(configManager)
+	merchantInstance, err2 = merchant.New(configManager)
 	if err2 != nil {
 		mainLogger.WithError(err2).Fatal("Failed to create merchant")
 	}
-	merchantProvider = &merchantTypesProvider{inner: merchant.NewMutexMerchantProvider(merchantInstance)}
-
-	if deg, ok := merchantInstance.(*merchant.MerchantDegraded); ok {
-		mainLogger.Warn("Merchant started in degraded mode — wallet will initialize when a mint becomes reachable")
-		deg.OnUpgrade(func(full merchant.MerchantInterface) {
-			mainLogger.Info("Upgrading from degraded to full merchant")
-			swapMerchant(full)
-			registerReachableSetChangedCallback(full)
-		})
-	} else {
-		registerReachableSetChangedCallback(merchantInstance)
-	}
+	merchantInstance.StartPayoutRoutine()
+	merchantInstance.StartDataUsageMonitoring()
 
 	initUpstreamManager()
 
@@ -198,7 +127,7 @@ func initUpstreamDetector() {
 		mainLogger.WithError(err).Fatal("Failed to create upstream detector instance")
 	}
 
-	usmInstance, err := upstream_session_manager.NewUpstreamSessionManager(configManager, merchantProvider)
+	usmInstance, err := upstream_session_manager.NewUpstreamSessionManager(configManager, merchantInstance)
 	if err != nil {
 		mainLogger.WithError(err).Fatal("Failed to create upstream session manager instance")
 	}
@@ -258,7 +187,7 @@ func (r *resellerModeAdapter) IsResellerModeActive() bool {
 }
 
 func initCLIServer() {
-	cliServer = cli.NewCLIServer(configManager, merchantProvider.inner, sharedConnector, sharedScanner, upstreamManager)
+	cliServer = cli.NewCLIServer(configManager, merchantInstance, sharedConnector, sharedScanner, upstreamManager)
 
 	err := cliServer.Start()
 	if err != nil {
@@ -270,39 +199,16 @@ func initCLIServer() {
 }
 
 func getMacAddress(ipAddress string) (string, error) {
-	if net.ParseIP(ipAddress) == nil {
-		return "", fmt.Errorf("invalid IP address: %s", ipAddress)
-	}
-	ipLower := strings.ToLower(strings.TrimSpace(ipAddress))
+	cmdIn := `cat /tmp/dhcp.leases | cut -f 2,3,4 -s -d" " | grep -i ` + ipAddress + ` | cut -f 1 -s -d" "`
+	commandOutput, err := exec.Command("sh", "-c", cmdIn).Output()
 
-	// Primary source: dnsmasq lease file — authoritative for DHCP clients.
-	// Format per line: <timestamp> <mac> <ip> <hostname> <clientid>
-	// Match case-insensitively so IPv6 hextets compare regardless of casing.
-	data, err := os.ReadFile("/tmp/dhcp.leases")
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 && strings.ToLower(fields[2]) == ipLower {
-				return strings.TrimSpace(fields[1]), nil
-			}
-		}
+	var commandOutputString = string(commandOutput)
+	if err != nil {
+		fmt.Println(err, "Error when getting client's mac address. Command output: "+commandOutputString)
+		return "nil", err
 	}
 
-	// Fallback: kernel ARP table — catches static-IP clients and survives
-	// dnsmasq restarts. In-memory entries expire after a few minutes of
-	// inactivity, so this is not a replacement for the lease file.
-	// Format per line: <ip> <hwtype> <flags> <mac> <mask> <device>
-	arpData, err := os.ReadFile("/proc/net/arp")
-	if err == nil {
-		for _, line := range strings.Split(string(arpData), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 4 && strings.ToLower(fields[0]) == ipLower && fields[3] != "00:00:00:00:00:00" {
-				return strings.TrimSpace(fields[3]), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no MAC found for %s in DHCP leases or ARP table", ipAddress)
+	return strings.Trim(commandOutputString, "\n"), nil
 }
 
 // CORS middleware to handle Cross-Origin Resource Sharing
@@ -314,14 +220,9 @@ func CorsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}).Debug("CORS middleware processing request")
 
 		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Allow any origin, or specify domains like "https://yourdomain.com"
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		origin := r.Header.Get("Origin")
-		if origin == "" || isLocalOrigin(origin) {
-			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-			}
-		}
 
 		// Handle preflight OPTIONS requests
 		if r.Method == "OPTIONS" {
@@ -344,12 +245,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mainLogger.WithField("mac", mac).Debug("MAC address resolved")
+	fmt.Println("mac", mac)
 	fmt.Fprint(w, "mac=", mac)
 }
 
 func handleDetails(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, merchantProvider.inner.GetMerchant().GetAdvertisement())
+	fmt.Fprint(w, merchantInstance.GetAdvertisement())
 }
 
 // handleRootPost handles POST requests to the root endpoint
@@ -370,20 +271,20 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	macAddress, err := getMacAddress(ip)
 	if err != nil {
 		mainLogger.WithError(err).Error("Error getting MAC address")
-		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "mac-address-lookup-failed",
+		sendNoticeResponse(w, merchantInstance, http.StatusBadRequest, "error", "mac-address-lookup-failed",
 			fmt.Sprintf("Failed to lookup MAC address for IP %s: %v", ip, err), "")
 		return
 	}
 
-	// Read the request body (capped at 1MB to prevent resource exhaustion)
-	defer r.Body.Close()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	// Read the request body
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		mainLogger.WithError(err).Error("Error reading request body")
-		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "invalid-request",
+		sendNoticeResponse(w, merchantInstance, http.StatusBadRequest, "error", "invalid-request",
 			fmt.Sprintf("Error reading request body: %v", err), macAddress)
 		return
 	}
+	defer r.Body.Close()
 
 	// Print the request body to console
 	bodyStr := string(body)
@@ -415,7 +316,7 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 
 		if paymentToken == "" {
 			mainLogger.Error("No payment tag found in event")
-			sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "invalid-event",
+			sendNoticeResponse(w, merchantInstance, http.StatusBadRequest, "error", "invalid-event",
 				"No payment tag found in event", macAddress)
 			return
 		}
@@ -428,14 +329,14 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process payment with cashu token and MAC address
-	responseEvent, err := merchantProvider.inner.GetMerchant().PurchaseSession(cashuToken, macAddress)
+	responseEvent, err := merchantInstance.PurchaseSession(cashuToken, macAddress)
 
 	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
 
 	if err != nil {
 		mainLogger.WithError(err).Error("Payment processing failed")
-		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusInternalServerError, "error", "internal-error",
+		sendNoticeResponse(w, merchantInstance, http.StatusInternalServerError, "error", "internal-error",
 			fmt.Sprintf("Internal error during payment processing: %v", err), macAddress)
 		return
 	}
@@ -458,8 +359,8 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendNoticeResponse creates and sends a notice event response
-func sendNoticeResponse(w http.ResponseWriter, m merchant.MerchantInterface, statusCode int, level, code, message, customerPubkey string) {
-	noticeEvent, err := m.CreateNoticeEvent(level, code, message, customerPubkey)
+func sendNoticeResponse(w http.ResponseWriter, merchantInstance merchant.MerchantInterface, statusCode int, level, code, message, customerPubkey string) {
+	noticeEvent, err := merchantInstance.CreateNoticeEvent(level, code, message, customerPubkey)
 	if err != nil {
 		mainLogger.WithError(err).Error("Error creating notice event")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -540,18 +441,14 @@ func HandleBalance(w http.ResponseWriter, r *http.Request) {
 	ip := getIP(r)
 	macAddress, err := getMacAddress(ip)
 	if err != nil {
-		// Client IP not in DHCP leases — can't identify device.
-		// Return "no active session" instead of erroring, so the balance
-		// page works even when lease is expired or missing (e.g. after
-		// dnsmasq restart, or requests from non-DHCP clients).
-		mainLogger.WithError(err).Debug("MAC lookup failed for /balance, returning no-session")
+		mainLogger.WithError(err).Error("Error getting MAC address for /balance")
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(balanceResponse{Status: 1, SessionActive: false})
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(balanceResponse{Status: 0, Error: "failed to resolve device MAC address"})
 		return
 	}
 
-	usage, err := merchantProvider.inner.GetMerchant().GetUsage(macAddress)
+	usage, err := merchantInstance.GetUsage(macAddress)
 	if err != nil {
 		mainLogger.WithFields(logrus.Fields{"mac": macAddress, "error": err}).Error("Error getting balance usage")
 		w.Header().Set("Content-Type", "application/json")
@@ -575,7 +472,7 @@ func HandleBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := merchantProvider.inner.GetMerchant().GetSession(macAddress)
+	session, err := merchantInstance.GetSession(macAddress)
 	if err != nil || session == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -642,7 +539,7 @@ func handleLightningInvoicePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	invoice, err := merchantProvider.inner.GetMerchant().RequestLightningInvoice(macAddress, mintURL, req.Amount)
+	invoice, err := merchantInstance.RequestLightningInvoice(macAddress, mintURL, req.Amount)
 	if err != nil {
 		mainLogger.WithError(err).Warn("Failed to create lightning invoice")
 		w.Header().Set("Content-Type", "application/json")
@@ -686,7 +583,7 @@ func handleLightningInvoiceGet(w http.ResponseWriter, r *http.Request) {
 
 	// Quotes are bound to the device MAC at invoice creation time. Polling only
 	// reveals status for that same device and access is granted to the recorded MAC.
-	status, err := merchantProvider.inner.GetMerchant().GetLightningInvoiceStatus(quoteID, macAddress)
+	status, err := merchantInstance.GetLightningInvoiceStatus(quoteID, macAddress)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if errors.Is(err, merchant.ErrQuoteNotFound) {
@@ -711,6 +608,54 @@ func handleLightningInvoiceGet(w http.ResponseWriter, r *http.Request) {
 		Allotment:     status.Allotment,
 		Metric:        status.Metric,
 	})
+}
+
+func newLuCIProxy() *httputil.ReverseProxy {
+	target, _ := url.Parse("http://127.0.0.1:8080")
+	return &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(target)
+			r.SetXForwarded()
+			mainLogger.WithFields(logrus.Fields{
+				"method": r.In.Method,
+				"path":   r.In.URL.Path,
+			}).Debug("Proxying request to LuCI")
+		},
+	}
+}
+
+func isTollgateRoute(path string) bool {
+	switch path {
+	case "/whoami", "/ln-invoice", "/balance", "/usage":
+		return true
+	default:
+		return false
+	}
+}
+
+func startHTTPSServer(certFile, keyFile string) {
+	luciProxy := newLuCIProxy()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isTollgateRoute(r.URL.Path) {
+			http.DefaultServeMux.ServeHTTP(w, r)
+			return
+		}
+		luciProxy.ServeHTTP(w, r)
+	})
+
+	server := &http.Server{
+		Addr:         ":443",
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	mainLogger.Info("Starting HTTPS server on :443 with LuCI proxy")
+	if err := server.ListenAndServeTLS(certFile, keyFile); err != nil {
+		mainLogger.WithError(err).Error("HTTPS server failed")
+	}
 }
 
 func main() {
@@ -755,7 +700,7 @@ func main() {
 		}
 
 		// Get usage from merchant
-		usageStr, err := merchantProvider.inner.GetMerchant().GetUsage(macAddress)
+		usageStr, err := merchantInstance.GetUsage(macAddress)
 		if err != nil {
 			mainLogger.WithFields(logrus.Fields{
 				"mac":   macAddress,
@@ -770,101 +715,44 @@ func main() {
 		fmt.Fprint(w, usageStr)
 	})
 
+	// Conditionally start HTTPS server on 443 with LuCI reverse proxy
+	certFile := "/etc/tollgate/ssl/server.crt"
+	keyFile := "/etc/tollgate/ssl/server.key"
+	if _, err := os.Stat(certFile); err == nil {
+		if _, err := os.Stat(keyFile); err == nil {
+			go startHTTPSServer(certFile, keyFile)
+		} else {
+			mainLogger.Warn("HTTPS cert found but key missing, skipping HTTPS")
+		}
+	}
+
 	mainLogger.Info("Starting HTTP server on all interfaces...")
 	server := &http.Server{
 		Addr: port,
 		// Add explicit timeouts to avoid potential deadlocks in Go 1.24
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 120 * time.Second,
+		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
 	mainLogger.Fatal(server.ListenAndServe())
 }
 
-func isLocalRequest(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback()
-}
-
 func getIP(r *http.Request) string {
-	if isLocalRequest(r) {
-		ip := r.Header.Get("X-Real-Ip")
-		if ip != "" {
-			return strings.TrimSpace(ip)
-		}
-
-		ips := r.Header.Get("X-Forwarded-For")
-		if ips != "" {
-			return strings.TrimSpace(strings.Split(ips, ",")[0])
-		}
+	ip := r.Header.Get("X-Real-Ip")
+	if ip != "" {
+		return ip
 	}
 
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
-}
-
-var privateCIDRs []net.IPNet
-
-func init() {
-	for _, cidr := range []string{
-		"192.168.0.0/16",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"127.0.0.0/8",
-		"fd00::/8",
-		"::1/128",
-	} {
-		_, n, err := net.ParseCIDR(cidr)
-		if err != nil {
-			panic(fmt.Sprintf("invalid CIDR %s: %v", cidr, err))
-		}
-		privateCIDRs = append(privateCIDRs, *n)
-	}
-}
-
-func isLocalOrigin(origin string) bool {
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	host := u.Hostname()
-
-	if ip := net.ParseIP(host); ip != nil {
-		for _, n := range privateCIDRs {
-			if n.Contains(ip) {
-				return true
-			}
-		}
-		return false
+	ips := r.Header.Get("X-Forwarded-For")
+	if ips != "" {
+		return strings.Split(ips, ",")[0]
 	}
 
-	if host == "localhost" {
-		return true
+	ip = r.RemoteAddr
+	if colon := strings.LastIndex(ip, ":"); colon != -1 {
+		ip = ip[:colon]
 	}
 
-	addrs, err := net.LookupHost(host)
-	if err != nil {
-		return false
-	}
-	for _, addr := range addrs {
-		if ip := net.ParseIP(addr); ip != nil {
-			for _, n := range privateCIDRs {
-				if n.Contains(ip) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return ip
 }
