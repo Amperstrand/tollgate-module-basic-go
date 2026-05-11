@@ -25,19 +25,10 @@ setup_firewall_include() {
 setup_uhttpd() {
     uci -q get uhttpd.main >/dev/null 2>&1 || uci set uhttpd.main=uhttpd
     uci -q delete uhttpd.main.listen_http
-    uci add_list uhttpd.main.listen_http='0.0.0.0:8080'
-    uci add_list uhttpd.main.listen_http='[::]:8080'
+    uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
     uci -q delete uhttpd.main.listen_https
     uci -q delete uhttpd.main.cert
     uci -q delete uhttpd.main.key
-    # Only enable HTTPS if cert and key files exist; otherwise uhttpd
-    # crash-loops because it sees listen_https but has no TLS config.
-    if [ -f /etc/uhttpd.crt ] && [ -f /etc/uhttpd.key ]; then
-        uci add_list uhttpd.main.listen_https='0.0.0.0:443'
-        uci add_list uhttpd.main.listen_https='[::]:443'
-        uci set uhttpd.main.cert='/etc/uhttpd.crt'
-        uci set uhttpd.main.key='/etc/uhttpd.key'
-    fi
     uci set uhttpd.main.redirect_https='0'
     uci set uhttpd.main.home='/www'
     uci set uhttpd.main.rfc1918_filter='1'
@@ -113,7 +104,8 @@ setup_hostname() {
     uci set uhttpd.main.commonname="$final_hostname"
     # Apply to running kernel immediately so /proc/sys/kernel/hostname
     # reflects the new value without requiring a reboot.
-    echo "$final_hostname" > /proc/sys/kernel/hostname
+    hostname "$final_hostname" 2>/dev/null || echo "$final_hostname" > /proc/sys/kernel/hostname
+    uci set uhttpd.defaults.commonname="$final_hostname"
     log "Hostname applied to running kernel: ${final_hostname}"
 }
 
@@ -133,6 +125,9 @@ setup_nodogsplash() {
     fi
     if ! echo "$nds_users" | grep -q "port 8080"; then
         uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080'
+    fi
+    if ! echo "$nds_users" | grep -q "port 443"; then
+        uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 443'
     fi
     if ! echo "$nds_users" | grep -q "port 2050"; then
         uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2050'
@@ -171,22 +166,21 @@ fi
 EOF
 }
 
-# Nodogsplash only manages IPv4 iptables. If IPv6 Router Advertisements are
-# active on LAN, WiFi clients get global IPv6 addresses and Android validates
-# connectivity over IPv6 — completely bypassing the captive portal.
-# https://github.com/OpenTollGate/tollgate-module-basic-go/issues/148
-setup_disable_ipv6_lan() {
-    uci set dhcp.lan.ra='disabled'
-    uci set dhcp.lan.dhcpv6='disabled'
-    uci set network.lan.ip6assign='0'
-    log "IPv6 disabled on LAN (captive portal bypass prevention)"
-}
-
 enable_modems() {
     local section
     for section in $(uci show network 2>/dev/null | awk -F'[.=]' '/^network\.modem_/ {print $2}' | sort -u); do
         uci set "network.$section.disabled=0"
     done
+}
+
+# Disable IPv6 on LAN to prevent captive portal bypass (issue #148).
+# IPv6 traffic is not intercepted by NoDogSplash, so an IPv6-capable client
+# could bypass the toll gate entirely. Must run before setup_private_network.
+setup_disable_ipv6_lan() {
+    uci set dhcp.lan.ra='disabled'
+    uci set dhcp.lan.dhcpv6='disabled'
+    uci set network.lan.ip6assign='0'
+    log "IPv6 disabled on LAN (captive portal bypass prevention)"
 }
 
 # Consumes RANDOM_SUFFIX; derives a private /24 adjacent to the LAN subnet.
@@ -281,15 +275,15 @@ commit_all() {
 log "Starting TollGate configuration"
 
 setup_firewall_include
-setup_uhttpd
 setup_dns_dnsmasq
 setup_hostname
+setup_uhttpd
 setup_public_wifi            # exports RANDOM_SUFFIX, GATEWAY_NAME
 setup_nodogsplash
 setup_tollgate_firewall_rules
 setup_profile_hook
-setup_disable_ipv6_lan
 enable_modems
+setup_disable_ipv6_lan
 setup_private_network        # consumes RANDOM_SUFFIX
 commit_all
 
