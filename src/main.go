@@ -594,6 +594,31 @@ func HandleBalance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func HandleUsage(w http.ResponseWriter, r *http.Request) {
+	ip := getIP(r)
+	macAddress, err := getMacAddress(ip)
+	if err != nil {
+		mainLogger.WithError(err).Error("Error getting MAC address for /usage")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "-1/-1")
+		return
+	}
+
+	usageStr, err := getMerchant().GetUsage(macAddress)
+	if err != nil {
+		mainLogger.WithFields(logrus.Fields{
+			"mac":   macAddress,
+			"error": err,
+		}).Error("Error getting usage")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "-1/-1")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, usageStr)
+}
+
 func HandleLightningInvoice(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -736,31 +761,7 @@ func main() {
 
 	http.HandleFunc("/usage", func(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithField("remote_addr", r.RemoteAddr).Debug("Hit /usage endpoint")
-
-		// Get MAC address from request
-		ip := getIP(r)
-		macAddress, err := getMacAddress(ip)
-		if err != nil {
-			mainLogger.WithError(err).Error("Error getting MAC address for /usage")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "-1/-1")
-			return
-		}
-
-		// Get usage from merchant
-		usageStr, err := getMerchant().GetUsage(macAddress)
-		if err != nil {
-			mainLogger.WithFields(logrus.Fields{
-				"mac":   macAddress,
-				"error": err,
-			}).Error("Error getting usage")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "-1/-1")
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, usageStr)
+		CorsMiddleware(HandleUsage)(w, r)
 	})
 
 	mainLogger.Info("Starting HTTP server on all interfaces...")
