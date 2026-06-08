@@ -14,14 +14,6 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOGFILE"; }
 
 # -- setup steps ------------------------------------------------------------
 
-setup_firewall_include() {
-    # Pull in /etc/config/firewall-tollgate via a named include.
-    uci -q get firewall.tollgate_rules >/dev/null 2>&1 && return
-    uci add firewall include >/dev/null
-    uci set firewall.@include[-1].path='/etc/config/firewall-tollgate'
-    uci rename firewall.@include[-1]='tollgate_rules'
-}
-
 setup_uhttpd() {
     uci -q get uhttpd.main >/dev/null 2>&1 || uci set uhttpd.main=uhttpd
     uci -q delete uhttpd.main.listen_http
@@ -143,7 +135,7 @@ setup_nodogsplash() {
 
 setup_tollgate_firewall_rules() {
     # WAN→router: the TollGate protocol port.
-    if ! grep -q "port 2121" /etc/config/firewall-tollgate 2>/dev/null; then
+    if ! uci -q get firewall.Allow_TollGate_Protocol >/dev/null 2>&1; then
         uci add firewall rule >/dev/null
         uci set firewall.@rule[-1].name='Allow-TollGate-Protocol'
         uci set firewall.@rule[-1].src='wan'
@@ -280,7 +272,6 @@ commit_all() {
 : > "$LOGFILE"
 log "Starting TollGate configuration"
 
-setup_firewall_include
 setup_uhttpd
 setup_dns_dnsmasq
 setup_hostname
