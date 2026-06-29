@@ -240,6 +240,33 @@ else
     log_message "TollGate protocol port already in firewall rules"
 fi
 
+# 6b. RFC 1918 isolation — block public WiFi from reaching upstream private networks
+# Prevents authenticated users from accessing the operator's home/ISP LAN.
+# See SECURITY.md for full analysis.
+log_message "Checking for RFC 1918 isolation rules"
+if ! uci -q get firewall.block_rfc1918_10 >/dev/null 2>&1; then
+    for _rule in \
+        "block_rfc1918_10:10.0.0.0/8" \
+        "block_rfc1918_172:172.16.0.0/12" \
+        "block_rfc1918_192:192.168.0.0/16" \
+        "block_linklocal:169.254.0.0/16"; do
+        _name="${_rule%%:*}"
+        _cidr="${_rule##*:}"
+        uci set firewall.${_name}=rule
+        uci_safe_set firewall ${_name} name "Block-LAN-To-${_name}"
+        uci_safe_set firewall ${_name} src 'lan'
+        uci_safe_set firewall ${_name} dest 'wan'
+        uci_safe_set firewall ${_name} dest_ip "${_cidr}"
+        uci_safe_set firewall ${_name} proto 'all'
+        uci_safe_set firewall ${_name} family 'ipv4'
+        uci_safe_set firewall ${_name} target 'DROP'
+    done
+    uci commit firewall
+    log_message "Added RFC 1918 isolation rules (4 DROP rules)"
+else
+    log_message "RFC 1918 isolation rules already present"
+fi
+
 # 7. Add first-login-setup hook to profile if it doesn't exist
 log_message "Checking for first-login-setup hook in profile"
 if ! grep -q "first-login-setup" /etc/profile; then
