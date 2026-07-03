@@ -15,7 +15,7 @@ env:
   GO_VERSION: "1.24.2"
   DEBUG: "true"
   BLOSSOM_SERVERS: "https://blossom.psbt.me https://blossom.primal.net"
-  BLOSSOM_MIN_SUCCESS: "2"
+  BLOSSOM_MIN_SUCCESS: "1"
   COORDINATION_RELAYS: >-
     wss://relay.damus.io
     wss://nos.lol
