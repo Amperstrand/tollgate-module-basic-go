@@ -1,0 +1,309 @@
+name: SHC Runner Benchmark
+
+# Manual-only at first. Compares a baseline ubuntu-latest run against a
+# disposable SHC self-hosted runner for the same workload. Does NOT alter
+# the normal test.yml or build-package.yml release pipelines.
+on:
+  workflow_dispatch:
+    inputs:
+      shc_size:
+        description: "SHC runner size"
+        default: "dev-4c-16gb"
+        required: true
+        type: string
+      shc_template:
+        description: "SHC OS template"
+        default: "ubuntu2404-cloud"
+        required: true
+        type: string
+      workload:
+        description: "Benchmark workload: go-test or package-ipk-smoke"
+        default: "go-test"
+        required: true
+        type: string
+
+# Required secrets (configure under Settings → Secrets and variables → Actions):
+#   SHC_API_KEY            — SHC user API key. Mint at /account/api-keys.
+#   SHC_GITHUB_ADMIN_TOKEN — PAT with repo admin / runners:write on this repo.
+#                            The default GITHUB_TOKEN CANNOT create runner
+#                            registration tokens. Mint a classic PAT with
+#                            `repo` scope, or a fine-grained PAT with
+#                            `Administration: read+write` on this repo.
+# Never hardcode these, never log them, never commit them.
+
+concurrency:
+  group: shc-runner-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  baseline-ubuntu:
+    name: Baseline (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      duration_s: ${{ steps.timer.outputs.duration_s }}
+      pass: ${{ steps.bench.outcome }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+      - name: Workload
+        id: bench
+        run: |
+          echo "### Baseline: ubuntu-latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Workload: \`${{ inputs.workload }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          uname -a | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          nproc | sed 's/^/nproc: /' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          t0=$(date +%s)
+          if [ "${{ inputs.workload }}" = "go-test" ]; then
+            # Same module subset as .github/workflows/test.yml go-test job.
+            fail=0
+            for m in \
+              src/config_manager src/utils src/cmd/tollgate-cli src/lightning \
+              src/tollgate_protocol src/tollwallet src/valve \
+              src/wireless_gateway_manager; do
+              echo "::group::$m"
+              ( cd "$m" && bash "$GITHUB_WORKSPACE/.github/scripts/go-test-summary.sh" "$m" ./... -count=1 ) || fail=1
+              echo "::endgroup::"
+            done
+            exit $fail
+          else
+            echo "::error::Unknown workload '${{ inputs.workload }}' (only 'go-test' is implemented in this MVP)" >&2
+            exit 2
+          fi
+          t1=$(date +%s)
+          dur=$((t1 - t0))
+          echo "DUR=$dur" >> "$GITHUB_ENV"
+      - name: Timer
+        id: timer
+        if: always()
+        run: |
+          echo "duration_s=${DUR:-unknown}" >> "$GITHUB_OUTPUT"
+          printf '### Baseline timing\n\n`%s` seconds (workload=%s, outcome=%s)\n' \
+            "${DUR:-unknown}" "${{ inputs.workload }}" "${{ steps.bench.outcome }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  provision-shc-runner:
+    name: Provision SHC runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: baseline-ubuntu
+    outputs:
+      service_id: ${{ steps.provision.outputs.service_id }}
+      runner_label: ${{ steps.provision.outputs.runner_label }}
+      runner_name: ${{ steps.provision.outputs.runner_name }}
+      ip: ${{ steps.provision.outputs.ip }}
+      provision_total_s: ${{ steps.provision.outputs.provision_total_s }}
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.SHC_API_KEY }}" ]; then
+            echo "::error::Secret SHC_API_KEY is not configured." >&2; exit 2
+          fi
+          if [ -z "${{ secrets.SHC_GITHUB_ADMIN_TOKEN }}" ]; then
+            echo "::error::Secret SHC_GITHUB_ADMIN_TOKEN is not configured." >&2; exit 2
+          fi
+      - name: Checkout tollgate (for go-test-summary.sh + module source)
+        uses: actions/checkout@v6
+      - name: Checkout shc-toolkit (sibling repo, feature branch)
+        uses: actions/checkout@v6
+        with:
+          repository: Amperstrand/shc-toolkit
+          ref: feat/github-runner
+          path: shc-toolkit
+      - name: Install shc-toolkit
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e ./shc-toolkit
+          shc --version || shc --help | head -1
+      - name: Generate unique per-run label
+        id: label
+        run: |
+          RUNNER_LABEL="shc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "label=$RUNNER_LABEL" >> "$GITHUB_OUTPUT"
+          echo "Unique runner label: $RUNNER_LABEL"
+      - name: Provision
+        id: provision
+        env:
+          SHC_API_KEY: ${{ secrets.SHC_API_KEY }}
+          SHC_GITHUB_ADMIN_TOKEN: ${{ secrets.SHC_GITHUB_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          RUNNER_LABEL="${{ steps.label.outputs.label }}"
+          shc github-runner provision \
+            --repo "${{ github.repository }}" \
+            --size "${{ inputs.shc_size }}" \
+            --template "${{ inputs.shc_template }}" \
+            --labels "$RUNNER_LABEL" \
+            --output-json > provision-result.json
+
+          cat provision-result.json
+          if [ "$(jq -r .ok provision-result.json)" != "true" ]; then
+            echo "::error::provision failed: $(jq -r .error provision-result.json)" >&2
+            exit 1
+          fi
+
+          echo "service_id=$(jq -r '.service_id // empty' provision-result.json)" >> "$GITHUB_OUTPUT"
+          echo "runner_label=$(jq -r '.runner_label // empty' provision-result.json)" >> "$GITHUB_OUTPUT"
+          echo "runner_name=$(jq -r '.runner_name // empty' provision-result.json)" >> "$GITHUB_OUTPUT"
+          echo "ip=$(jq -r '.ip // empty' provision-result.json)" >> "$GITHUB_OUTPUT"
+          echo "provision_total_s=$(jq -r '.timings.durations.total_s // 0' provision-result.json)" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### SHC runner provisioned"
+            echo ""
+            echo "| service_id | size | template | total cold-start |"
+            echo "|---|---|---|---|"
+            echo "| \`$(jq -r '.service_id' provision-result.json)\` | \`${{ inputs.shc_size }}\` | \`${{ inputs.shc_template }}\` | \`$(jq -r '.timings.durations.total_s' provision-result.json)s\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload provision result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shc-provision-result
+          path: provision-result.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  benchmark-shc:
+    name: Benchmark on SHC runner
+    needs: provision-shc-runner
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - shc
+      - "${{ needs.provision-shc-runner.outputs.runner_label }}"
+    timeout-minutes: 30
+    outputs:
+      duration_s: ${{ steps.timer.outputs.duration_s }}
+      pass: ${{ steps.bench.outcome }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+      - name: Machine info
+        run: |
+          {
+            echo "### SHC runner machine info"
+            echo ""
+            echo '```'
+            uname -a
+            echo "nproc: $(nproc)"
+            free -h
+            df -h | head -3
+            cat /etc/os-release 2>/dev/null || true
+            echo '```'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Workload
+        id: bench
+        run: |
+          echo "### SHC runner benchmark: ${{ inputs.workload }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          t0=$(date +%s)
+          if [ "${{ inputs.workload }}" = "go-test" ]; then
+            fail=0
+            for m in \
+              src/config_manager src/utils src/cmd/tollgate-cli src/lightning \
+              src/tollgate_protocol src/tollwallet src/valve \
+              src/wireless_gateway_manager; do
+              echo "::group::$m"
+              ( cd "$m" && bash "$GITHUB_WORKSPACE/.github/scripts/go-test-summary.sh" "$m" ./... -count=1 ) || fail=1
+              echo "::endgroup::"
+            done
+            exit $fail
+          else
+            echo "::error::Unknown workload '${{ inputs.workload }}' (only 'go-test' is implemented in this MVP)" >&2
+            exit 2
+          fi
+          t1=$(date +%s)
+          dur=$((t1 - t0))
+          echo "DUR=$dur" >> "$GITHUB_ENV"
+      - name: Timer
+        id: timer
+        if: always()
+        run: |
+          echo "duration_s=${DUR:-unknown}" >> "$GITHUB_OUTPUT"
+          printf '### SHC runner timing\n\n`%s` seconds (workload=%s, outcome=%s)\n' \
+            "${DUR:-unknown}" "${{ inputs.workload }}" "${{ steps.bench.outcome }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  destroy-shc-runner:
+    name: Destroy SHC runner
+    needs: [provision-shc-runner, benchmark-shc]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout shc-toolkit
+        uses: actions/checkout@v6
+        with:
+          repository: Amperstrand/shc-toolkit
+          ref: feat/github-runner
+          path: shc-toolkit
+      - name: Install shc-toolkit
+        run: python3 -m pip install -e ./shc-toolkit
+      - name: Destroy
+        env:
+          SHC_API_KEY: ${{ secrets.SHC_API_KEY }}
+        run: |
+          SID="${{ needs.provision-shc-runner.outputs.service_id }}"
+          if [ -z "$SID" ] || [ "$SID" = "null" ]; then
+            echo "No service_id was produced by provision job; nothing to destroy."
+            {
+              echo "### SHC teardown"
+              echo ""
+              echo "No service_id from provision — nothing to destroy."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Cancelling SHC VM service_id=$SID ..."
+          shc github-runner destroy --service-id "$SID" | tee destroy-result.json
+          {
+            echo "### SHC teardown"
+            echo ""
+            echo '```json'
+            cat destroy-result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  summarize:
+    name: Summary
+    needs: [baseline-ubuntu, provision-shc-runner, benchmark-shc, destroy-shc-runner]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write comparison summary
+        run: |
+          {
+            echo "## SHC Runner Benchmark — Summary"
+            echo ""
+            echo "| Metric | Baseline (ubuntu-latest) | SHC runner |"
+            echo "|---|---|---|"
+            printf '| workload duration (s) | `%s` | `%s` |\n' \
+              "${{ needs.baseline-ubuntu.outputs.duration_s }}" \
+              "${{ needs.benchmark-shc.outputs.duration_s }}"
+            printf '| job outcome | `%s` | `%s` |\n' \
+              "${{ needs.baseline-ubuntu.outputs.pass }}" \
+              "${{ needs.benchmark-shc.outputs.pass }}"
+            printf '| SHC cold-start (s) | — | `%s` |\n' \
+              "${{ needs.provision-shc-runner.outputs.provision_total_s }}"
+            printf '| SHC service_id | — | `%s` |\n' \
+              "${{ needs.provision-shc-runner.outputs.service_id }}"
+            printf '| SHC runner label | — | `%s` |\n' \
+              "${{ needs.provision-shc-runner.outputs.runner_label }}"
+            printf '| SHC size / template | — | `%s` / `%s` |\n' \
+              "${{ inputs.shc_size }}" "${{ inputs.shc_template }}"
+            echo ""
+            echo "Backend: \`shc-vps\` (full SHC VPS per job). Future: Firecracker microVM."
+            echo "Destroy outcome: \`${{ needs.destroy-shc-runner.result }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
