@@ -41,6 +41,12 @@ and [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Config schema: `vendor_ie_discovery` no longer Required.** A
+  Required key with Default false rejected every existing config that
+  predated the key (the vendor-IE pipeline itself landed with #312);
+  optional-with-default upgrades cleanly.
+  ([#332](https://github.com/OpenTollGate/tollgate-module-basic-go/pull/332))
+
 - **Captive portal no longer served through nodogsplash.**
   `/etc/nodogsplash/htdocs` is no longer a symlink to the SPA. A tiny
   stub page — installed as `splash.html`, the page NDS actually serves
