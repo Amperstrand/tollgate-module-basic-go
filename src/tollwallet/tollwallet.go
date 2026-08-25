@@ -8,13 +8,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenTollGate/gonuts-tollgate/cashu"
+	"github.com/OpenTollGate/gonuts-tollgate/cashu/nuts/nut04"
+	"github.com/OpenTollGate/gonuts-tollgate/cashu/nuts/nut10"
+	"github.com/OpenTollGate/gonuts-tollgate/wallet"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/lightning"
-	"github.com/Origami74/gonuts-tollgate/cashu"
-	"github.com/Origami74/gonuts-tollgate/cashu/nuts/nut04"
-	"github.com/Origami74/gonuts-tollgate/wallet"
 )
 
 var ErrTokenAlreadySpent = errors.New("Token already spent")
+var ErrLockedToken = errors.New("token has spending conditions and cannot be spent by the gateway")
+
+// ErrWalletNotInitialized is returned by wallet operations when the underlying
+// cashu wallet has not been initialized (for example on a bare Merchant or in
+// degraded mode), so callers get an error instead of a nil-pointer panic.
+var ErrWalletNotInitialized = errors.New("wallet not initialized")
 
 type TollWallet struct {
 	wallet                     *wallet.Wallet
@@ -109,8 +116,13 @@ func (w *TollWallet) Shutdown() error {
 	return nil
 }
 
+// NUT #00: `Carol` can send `(x, C)` to `Bob` who then checks that `k*hash_to_curve(x) == C` (**verification**), and if so treats it as a valid spend of a token, adding `x` to the list of spent secrets.
 func (w *TollWallet) Receive(token cashu.Token) (uint64, error) {
 	mint := token.Mint()
+
+	if hasLockedProofs(token.Proofs()) {
+		return 0, ErrLockedToken
+	}
 
 	swapToTrusted := false
 
@@ -140,6 +152,7 @@ func (w *TollWallet) Receive(token cashu.Token) (uint64, error) {
 	return amountAfterSwap, nil
 }
 
+// NUT #03: The swap operation is the most important component of the Cashu system. A swap operation consists of multiple inputs (`Proofs`) and outputs (`BlindedMessages`). Mints verify and invalidate the inputs and issue new promises (`BlindSignatures`). These are then used by the wallet to generate new Proofs (see [NUT-00][00]).
 func (w *TollWallet) Send(amount uint64, mintUrl string, includeFees bool) (cashu.Token, error) {
 	log.Printf("TollWallet.Send: attempting to send %d sats from mint %s (includeFees=%t)", amount, mintUrl, includeFees)
 
@@ -258,15 +271,21 @@ func (w *TollWallet) SendWithOverpayment(amount uint64, mintUrl string, maxOverp
 	return tokenString, nil
 }
 
+// NUT #04: To request a mint quote, the wallet of `Alice` makes a `POST /v1/mint/quote/{method}` request where `method` is the payment method requested (e.g., `bolt11`, `bolt12`, etc.). `method` **MUST** match `[a-z0-9_-]+`.
 func (w *TollWallet) RequestMintQuote(amount uint64, mintURL string) (*nut04.PostMintQuoteBolt11Response, error) {
 	w.ensureMintRegistered(mintURL)
 	return w.wallet.RequestMint(amount, mintURL)
 }
 
+// NUT #04: To check the current accounting data of a mint quote, the wallet makes a `GET /v1/mint/quote/{method}/{quote_id}`.
 func (w *TollWallet) GetMintQuoteState(quoteID string) (*nut04.PostMintQuoteBolt11Response, error) {
+	if w.wallet == nil {
+		return nil, ErrWalletNotInitialized
+	}
 	return w.wallet.MintQuoteState(quoteID)
 }
 
+// NUT #04: After requesting a mint quote and paying the request, the wallet proceeds with minting new tokens by calling the `POST /v1/mint/{method}` endpoint.
 func (w *TollWallet) MintQuoteTokens(quoteID string) (uint64, error) {
 	return w.wallet.MintTokens(quoteID)
 }
@@ -275,7 +294,11 @@ func ParseToken(token string) (cashu.Token, error) {
 	return cashu.DecodeToken(token)
 }
 
-func mintURLMatches(a, b string) bool {
+// MintURLMatches compares two mint URLs for equality, tolerating
+// differences in case (host), trailing slashes, and path normalization.
+// Both URLs must parse successfully; if either fails to parse, a plain
+// string comparison is used as fallback.
+func MintURLMatches(a, b string) bool {
 	ua, err := url.Parse(a)
 	if err != nil {
 		return a == b
@@ -286,12 +309,41 @@ func mintURLMatches(a, b string) bool {
 	}
 	return strings.EqualFold(ua.Host, ub.Host) &&
 		ua.Scheme == ub.Scheme &&
-		ua.Path == ub.Path
+		normalizePath(ua.Path) == normalizePath(ub.Path)
+}
+
+func hasLockedProofs(proofs cashu.Proofs) bool {
+	for _, proof := range proofs {
+		secret, err := nut10.DeserializeSecret(proof.Secret)
+		if err == nil && secret.Kind != nut10.AnyoneCanSpend {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizePath strips a single trailing slash from the path so that
+// "/Bitcoin" and "/Bitcoin/" compare as equal, and treats empty path
+// the same as "/" (root).
+func normalizePath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if len(p) > 1 && p[len(p)-1] == '/' {
+		return p[:len(p)-1]
+	}
+	return p
+}
+
+// mintURLMatches is kept for internal backwards compatibility within
+// the tollwallet package.
+func mintURLMatches(a, b string) bool {
+	return MintURLMatches(a, b)
 }
 
 func contains(slice []string, str string) bool {
 	for _, item := range slice {
-		if mintURLMatches(item, str) {
+		if MintURLMatches(item, str) {
 			return true
 		}
 	}
@@ -320,6 +372,8 @@ func (w *TollWallet) GetAllMintBalances() map[string]uint64 {
 	return w.wallet.GetBalanceByMints()
 }
 
+// NUT #05: To request a melt quote, the wallet of `Alice` makes a `POST /v1/melt/quote/{method}` request where `method` is the payment method requested (e.g., `bolt11`, `bolt12`, etc.). `method` **MUST** match `[a-z0-9_-]+`.
+
 // MeltToLightning melts a token to a lightning invoice using LNURL
 // It attempts to melt for the target amount, reducing by 5% each time if fees are too high
 func (w *TollWallet) MeltToLightning(mintUrl string, targetAmount uint64, maxCost uint64, lnurl string) error {
@@ -327,7 +381,8 @@ func (w *TollWallet) MeltToLightning(mintUrl string, targetAmount uint64, maxCos
 
 	// Start with the aimed payment amount
 	currentAmount := targetAmount
-	maxAttempts := 10
+	// Retry the melt up to 5 times.
+	maxAttempts := 5
 	attempts := 0
 
 	var meltError error

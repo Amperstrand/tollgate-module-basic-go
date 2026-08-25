@@ -15,10 +15,10 @@ import (
 	"sync"
 
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager"
+	"github.com/OpenTollGate/tollgate-module-basic-go/src/lightning"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/tollwallet"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/utils"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/valve"
-	"github.com/Origami74/gonuts-tollgate/cashu"
 	"github.com/nbd-wtf/go-nostr"
 )
 
@@ -57,12 +57,13 @@ type MerchantInterface interface {
 type Merchant struct {
 	config            *config_manager.Config
 	configManager     *config_manager.ConfigManager
-	tollwallet        tollwallet.TollWallet
+	tollwallet        tollwallet.WalletPort
 	mintHealthTracker *MintHealthTracker
 	customerSessions  map[string]*CustomerSession
 	sessionMu         sync.RWMutex
 	lightningQuotes   map[string]*lightningQuoteRecord
 	lightningQuoteMu  sync.RWMutex
+	quoteStore        *quoteStore
 }
 
 func New(configManager *config_manager.ConfigManager) (MerchantInterface, error) {
@@ -123,10 +124,27 @@ func newFullMerchant(configManager *config_manager.ConfigManager, mintHealthTrac
 	if err := os.MkdirAll(walletDirPath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create wallet directory %s: %w", walletDirPath, err)
 	}
-	tw, walletErr := tollwallet.New(walletDirPath, mintURLs, false)
+	tw, walletErr := tollwallet.NewWalletPort(walletDirPath, mintURLs, false)
 
 	if walletErr != nil {
-		return nil, fmt.Errorf("failed to create wallet: %w", walletErr)
+		log.Printf("WARNING: Wallet initialization failed (%v) — starting in degraded mode", walletErr)
+		deg := NewMerchantDegradedWithWallet(configManager, mintHealthTracker, DefaultWalletFactory, walletDirPath)
+		mintHealthTracker.StartProactiveChecks()
+		mintHealthTracker.SetOnFirstReachableForDegraded(func() {
+			log.Printf("Mint became reachable — attempting to upgrade from degraded mode")
+			if err := deg.Shutdown(); err != nil {
+				log.Printf("ERROR: Failed to shutdown degraded wallet before upgrade: %v", err)
+			}
+			fullMerchant, err := newFullMerchant(configManager, mintHealthTracker)
+			if err != nil {
+				log.Printf("ERROR: Failed to upgrade from degraded mode: %v", err)
+				return
+			}
+			if deg.onUpgrade != nil {
+				deg.onUpgrade(fullMerchant)
+			}
+		})
+		return deg, nil
 	}
 	balance := tw.GetBalance()
 
@@ -143,12 +161,14 @@ func newFullMerchant(configManager *config_manager.ConfigManager, mintHealthTrac
 	m := &Merchant{
 		config:            config,
 		configManager:     configManager,
-		tollwallet:        *tw,
+		tollwallet:        tw,
 		mintHealthTracker: mintHealthTracker,
 		customerSessions:  make(map[string]*CustomerSession),
 		lightningQuotes:   make(map[string]*lightningQuoteRecord),
+		quoteStore:        newQuoteStore(filepath.Join(walletDirPath, "quotes.json")),
 	}
 
+	m.loadLightningQuotesFromDisk()
 	m.StartPayoutRoutine()
 	m.StartDataUsageMonitoring()
 	m.startLightningQuoteJanitor()
@@ -293,20 +313,34 @@ func (m *Merchant) StartPayoutRoutine() {
 	log.Printf("Payout routine started")
 }
 
-// processPayout checks balances and processes payouts for each mint
+// payoutInvoiceRetries is the invoice-fetch retry count for the reachability probe.
+const payoutInvoiceRetries = 5
+
+// fetchInvoiceWithRetry fetches an invoice, retrying up to payoutInvoiceRetries times.
+func fetchInvoiceWithRetry(lightningAddr string, amountSats uint64) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payoutInvoiceRetries; attempt++ {
+		invoice, err := lightning.GetInvoiceFromLightningAddress(lightningAddr, amountSats)
+		if err == nil {
+			return invoice, nil
+		}
+		lastErr = err
+		log.Printf("fetchInvoiceWithRetry(%s, %d) attempt %d/%d failed: %v", lightningAddr, amountSats, attempt, payoutInvoiceRetries, err)
+	}
+	return "", lastErr
+}
+
+// processPayout pays the owner first, then reachable maintainers. Unreachable
+// recipients are skipped (their share stays in the wallet); the owner must be
+// reachable and paid before any maintainer. Payee failures don't fault the mint.
 func (m *Merchant) processPayout(mintConfig config_manager.MintConfig) {
-	// Get current balance
-	// Note: The current implementation only returns total balance, not per mint
 	balance := m.tollwallet.GetBalanceByMint(mintConfig.URL)
 
-	// Skip if balance is below minimum payout amount
 	if balance < mintConfig.MinPayoutAmount {
 		log.Printf("Skipping payout %s, Balance %d does not meet threshold of %d", mintConfig.URL, balance, mintConfig.MinPayoutAmount)
 		return
 	}
 
-	// Get the amount we intend to payout to the owner.
-	// The tolerancePaymentAmount is the max amount we're willing to spend on the transaction, most of which should come back as change.
 	if balance <= mintConfig.MinBalance {
 		log.Printf("Skipping payout %s, Balance %d does not exceed min_balance %d", mintConfig.URL, balance, mintConfig.MinBalance)
 		return
@@ -318,37 +352,87 @@ func (m *Merchant) processPayout(mintConfig config_manager.MintConfig) {
 		return
 	}
 
-	for _, profitShare := range m.config.ProfitShare {
-		aimedAmount := uint64(math.Round(float64(aimedPaymentAmount) * profitShare.Factor))
-		if aimedAmount == 0 {
-			log.Printf("Skipping payout for %s: aimedAmount rounded to 0 (aimedPaymentAmount=%d, factor=%.4f)", profitShare.Identity, aimedPaymentAmount, profitShare.Factor)
+	// Build the recipient list in config order.
+	type recipient struct {
+		identity  string
+		amount    uint64
+		lightning string
+		isOwner   bool
+	}
+	var recipients []recipient
+	for _, ps := range m.config.ProfitShare {
+		amt := uint64(math.Round(float64(aimedPaymentAmount) * ps.Factor))
+		if amt == 0 {
+			log.Printf("Skipping payout for %s: aimedAmount rounded to 0 (aimedPaymentAmount=%d, factor=%.4f)", ps.Identity, aimedPaymentAmount, ps.Factor)
 			continue
 		}
-		// Lookup lightning address from identities based on the profitShare.Identity name
-		profitShareIdentity, err := identities.GetPublicIdentity(profitShare.Identity)
+		id, err := identities.GetPublicIdentity(ps.Identity)
 		if err != nil {
-			log.Printf("Warning: Could not find public identity for profit share: %v", err)
-			continue // Skip this profit share if identity not found
+			log.Printf("Warning: Could not find public identity for profit share %q: %v", ps.Identity, err)
+			continue
 		}
-		m.PayoutShare(mintConfig, aimedAmount, profitShareIdentity.LightningAddress)
+		recipients = append(recipients, recipient{
+			identity:  ps.Identity,
+			amount:    amt,
+			lightning: id.LightningAddress,
+			isOwner:   ps.Identity == "owner",
+		})
+	}
+	if len(recipients) == 0 {
+		return
+	}
+
+	// Phase 1 — reachability probe.
+	reachable := make([]recipient, 0, len(recipients))
+	for _, r := range recipients {
+		if _, err := fetchInvoiceWithRetry(r.lightning, r.amount); err != nil {
+			log.Printf("Payout %s: %s unreachable (no invoice after %d attempts: %v) — skipping, share stays in wallet",
+				mintConfig.URL, r.identity, payoutInvoiceRetries, err)
+			continue
+		}
+		reachable = append(reachable, r)
+	}
+
+	// Phase 2 — owner must be reachable and paid first.
+	var owner *recipient
+	for i := range reachable {
+		if reachable[i].isOwner {
+			owner = &reachable[i]
+			break
+		}
+	}
+	if owner == nil {
+		log.Printf("Payout %s: owner is unreachable — aborting all payouts this cycle", mintConfig.URL)
+		return
+	}
+	if err := m.PayoutShare(mintConfig, owner.amount, owner.lightning); err != nil {
+		log.Printf("Payout %s: owner payout failed (%v) — aborting dev-split payouts; e-cash retained", mintConfig.URL, err)
+		return
+	}
+
+	// Phase 3 — reachable maintainers.
+	for _, r := range reachable {
+		if r.isOwner {
+			continue
+		}
+		if err := m.PayoutShare(mintConfig, r.amount, r.lightning); err != nil {
+			log.Printf("Payout %s: payout to %s failed (%v) — e-cash retained for next cycle", mintConfig.URL, r.identity, err)
+			continue
+		}
 	}
 
 	log.Printf("Payout completed for mint %s", mintConfig.URL)
 }
 
-func (m *Merchant) PayoutShare(mintConfig config_manager.MintConfig, aimedPaymentAmount uint64, lightningAddress string) {
+// PayoutShare melts aimedPaymentAmount sats to lightningAddress, retrying the
+// melt up to 5 times. It does not fault the mint on payee failures (resolves #27).
+func (m *Merchant) PayoutShare(mintConfig config_manager.MintConfig, aimedPaymentAmount uint64, lightningAddress string) error {
 	tolerancePaymentAmount := aimedPaymentAmount + (aimedPaymentAmount * mintConfig.BalanceTolerancePercent / 100)
 
 	log.Printf("Processing payout for mint %s: aiming for %d sats with %d sats tolerance", mintConfig.URL, aimedPaymentAmount, tolerancePaymentAmount)
 
 	maxCost := aimedPaymentAmount + tolerancePaymentAmount
-	meltErr := m.tollwallet.MeltToLightning(mintConfig.URL, aimedPaymentAmount, maxCost, lightningAddress)
-
-	if meltErr != nil {
-		log.Printf("Error during payout for mint %s. Error melting to lightning. Marking unreachable... %v", mintConfig.URL, meltErr)
-		m.mintHealthTracker.MarkUnreachable(mintConfig.URL)
-		return
-	}
+	return m.tollwallet.MeltToLightning(mintConfig.URL, aimedPaymentAmount, maxCost, lightningAddress)
 }
 
 type PurchaseSessionResult struct {
@@ -357,6 +441,7 @@ type PurchaseSessionResult struct {
 }
 
 // PurchaseSession processes a payment with cashu token and MAC address, returns either a session event or a notice event
+// NUT-00 verification quote lives above TollWallet.Receive (single source; duplicate quotes flag in speccheck).
 func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr.Event, error) {
 	// Validate MAC address
 	if !utils.ValidateMACAddress(macAddress) {
@@ -369,7 +454,7 @@ func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr
 	}
 
 	// Process payment
-	paymentCashuToken, err := cashu.DecodeToken(cashuToken)
+	paymentCashuToken, err := m.tollwallet.DecodeToken(cashuToken)
 	if err != nil {
 		noticeEvent, noticeErr := m.CreateNoticeEvent("error", "payment-error-invalid-token",
 			fmt.Sprintf("Invalid cashu token: %v", err), macAddress)
@@ -420,6 +505,9 @@ func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr
 		if errors.Is(err, tollwallet.ErrTokenAlreadySpent) {
 			errorCode = "payment-error-token-spent"
 			errorMessage = "Token has already been spent"
+		} else if isRateLimitError(err) {
+			errorCode = "mint-rate-limited"
+			errorMessage = "Mint is rate-limiting requests. Please try again in a moment."
 		} else {
 			errorCode = "payment-processing-failed"
 			errorMessage = fmt.Sprintf("Payment processing failed: %v", err)
@@ -438,7 +526,7 @@ func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr
 	mintURL := paymentCashuToken.Mint()
 	allotment, err := m.calculateAllotment(amountAfterSwap, mintURL)
 	if err != nil {
-		noticeEvent, noticeErr := m.CreateNoticeEvent("error", "allotment-calculation-failed",
+		noticeEvent, noticeErr := m.CreateNoticeEvent("error", "session-error",
 			fmt.Sprintf("Failed to calculate allotment: %v", err), macAddress)
 		if noticeErr != nil {
 			return nil, fmt.Errorf("failed to calculate allotment and failed to create notice: %w", noticeErr)
@@ -449,10 +537,10 @@ func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr
 	// Add allotment to the session and only persist the update if gate access opens.
 	session, err := m.grantSessionAccess(macAddress, allotment)
 	if err != nil {
-		errorCode := "session-management-failed"
+		errorCode := "session-error"
 		errorMessage := fmt.Sprintf("Failed to manage session: %v", err)
 		if strings.Contains(err.Error(), "failed to open gate:") {
-			errorCode = "gate-open-failed"
+			errorCode = "session-error"
 			errorMessage = err.Error()
 		}
 		noticeEvent, noticeErr := m.CreateNoticeEvent("error", errorCode,
@@ -472,6 +560,13 @@ func (m *Merchant) PurchaseSession(cashuToken string, macAddress string) (*nostr
 	return sessionEvent, nil
 }
 
+func isRateLimitError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "429") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "too many requests")
+}
+
 func (m *Merchant) GetAdvertisement() string {
 	ad, err := CreateAdvertisement(m.configManager, m.mintHealthTracker)
 	if err != nil {
@@ -486,14 +581,14 @@ func CreateAdvertisement(configManager *config_manager.ConfigManager, tracker *M
 		return "", fmt.Errorf("main config is nil")
 	}
 
-	reachableMints := tracker.GetReachableMintConfigs()
+	reachableMints := tracker.GetAllConfiguredMintConfigs()
 
 	advertisementEvent := nostr.Event{
 		Kind: 10021,
 		Tags: nostr.Tags{
 			{"metric", config.Metric},
 			{"step_size", fmt.Sprintf("%d", config.StepSize)},
-			{"tips", "1", "2", "3", "4"},
+			{"tips", "1", "2"},
 		},
 		Content: "",
 	}
@@ -557,7 +652,7 @@ func (m *Merchant) calculateAllotment(amountSats uint64, mintURL string) (uint64
 	// Find the mint configuration for this mint
 	var mintConfig *config_manager.MintConfig
 	for _, mint := range m.config.AcceptedMints {
-		if mint.URL == mintURL {
+		if tollwallet.MintURLMatches(mint.URL, mintURL) {
 			mintConfig = &mint
 			break
 		}
@@ -1013,13 +1108,17 @@ func (m *Merchant) Fund(cashuToken string) (uint64, error) {
 	}
 	log.Printf("Attempting to decode token (length: %d, preview: %s)", len(cashuToken), tokenPreview)
 
-	parsedToken, err := cashu.DecodeTokenV4(cashuToken)
+	parsedToken, err := tollwallet.DecodeToken(cashuToken)
 	if err != nil {
 		log.Printf("Failed to decode cashu token (length: %d): %v", len(cashuToken), err)
 		return 0, fmt.Errorf("invalid cashu token format: %w", err)
 	}
 
-	// Add token to wallet
+	if m.tollwallet == nil {
+		parsedToken.Close()
+		return 0, fmt.Errorf("failed to receive token: %w", tollwallet.ErrWalletNotInitialized)
+	}
+
 	amountReceived, err := m.tollwallet.Receive(parsedToken)
 	if err != nil {
 		log.Printf("Failed to receive cashu token: %v", err)

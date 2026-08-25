@@ -46,8 +46,12 @@ func (tp *tollGateProber) ProbeGatewayWithContext(ctx context.Context, interface
 	if gatewayIP == "" {
 		return nil, fmt.Errorf("gateway IP is empty")
 	}
-	if net.ParseIP(gatewayIP) == nil {
+	parsed := net.ParseIP(gatewayIP)
+	if parsed == nil {
 		return nil, fmt.Errorf("invalid gateway IP: %s", gatewayIP)
+	}
+	if parsed.IsLoopback() || parsed.IsUnspecified() || parsed.IsLinkLocalUnicast() {
+		return nil, fmt.Errorf("gateway IP %s is a loopback, unspecified, or link-local address", gatewayIP)
 	}
 
 	// Store the cancel function for this interface
@@ -187,7 +191,7 @@ func (tp *tollGateProber) performRequestWithContext(ctx context.Context, url str
 	}
 
 	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -221,8 +225,12 @@ func (tp *tollGateProber) TriggerCaptivePortalSession(ctx context.Context, gatew
 	if gatewayIP == "" {
 		return fmt.Errorf("gateway IP is empty")
 	}
-	if net.ParseIP(gatewayIP) == nil {
+	parsed := net.ParseIP(gatewayIP)
+	if parsed == nil {
 		return fmt.Errorf("invalid gateway IP: %s", gatewayIP)
+	}
+	if parsed.IsLoopback() || parsed.IsUnspecified() || parsed.IsLinkLocalUnicast() {
+		return fmt.Errorf("gateway IP %s is a loopback, unspecified, or link-local address", gatewayIP)
 	}
 
 	// Make HTTP GET request to port 80 (standard captive portal)
@@ -269,7 +277,7 @@ func (tp *tollGateProber) TriggerCaptivePortalSession(ctx context.Context, gatew
 	defer resp.Body.Close()
 
 	// Read and discard response body (we don't need the content)
-	_, _ = io.ReadAll(resp.Body)
+	_, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	logger.WithFields(logrus.Fields{
 		"gateway_ip":   gatewayIP,

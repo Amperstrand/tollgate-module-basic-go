@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/cobra/doc"
 )
 
 func askConfirmation(message string) bool {
@@ -306,6 +307,15 @@ var upstreamRemoveCmd = &cobra.Command{
 	},
 }
 
+var upstreamKnownCmd = &cobra.Command{
+	Use:   "known",
+	Short: "Show discovered TollGate APs from scan history",
+	Long:  "Display a summary of all TollGate access points discovered during scans, including signal range, pricing, and first/last seen timestamps.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return sendCommandAndDisplay("upstream", []string{"known"}, nil)
+	},
+}
+
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Show TollGate logs",
@@ -406,6 +416,38 @@ var healthCmd = &cobra.Command{
 	},
 }
 
+var genManCmd = &cobra.Command{
+	Use:    "__gen-man <dir>",
+	Short:  "Generate man pages for the tollgate CLI into <dir>",
+	Hidden: true,
+	Args:   cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir := args[0]
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create man dir %s: %w", dir, err)
+		}
+		header := &doc.GenManHeader{
+			Title:   "TOLLGATE",
+			Section: "8",
+			Source:  "tollgate-wrt",
+			Manual:  "TollGate OpenWrt Module",
+		}
+		if err := doc.GenManTree(rootCmd, header, dir); err != nil {
+			return fmt.Errorf("generate man tree: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote man pages for %d commands to %s\n", countCommands(rootCmd), dir)
+		return nil
+	},
+}
+
+func countCommands(c *cobra.Command) int {
+	n := 1
+	for _, sub := range c.Commands() {
+		n += countCommands(sub)
+	}
+	return n
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&jsonOutput, "json", "j", false, "Output results as JSON")
 
@@ -416,9 +458,10 @@ func init() {
 	walletCmd.AddCommand(drainCmd, balanceCmd, infoCmd, fundCmd)
 	privateCmd.AddCommand(privateStatusCmd, privateEnableCmd, privateDisableCmd, privateRenameCmd, privateSetPasswordCmd)
 	networkCmd.AddCommand(privateCmd)
-	upstreamCmd.AddCommand(upstreamScanCmd, upstreamConnectCmd, upstreamListCmd, upstreamRemoveCmd)
+	upstreamCmd.AddCommand(upstreamScanCmd, upstreamConnectCmd, upstreamListCmd, upstreamRemoveCmd, upstreamKnownCmd)
 	configCmd.AddCommand(configGetCmd, configSetCmd, configSchemaCmd, configSaveCmd, configSaveIdentitiesCmd)
 	rootCmd.AddCommand(walletCmd, networkCmd, upstreamCmd, statusCmd, versionCmd, startCmd, stopCmd, restartCmd, logsCmd, configCmd, healthCmd)
+	rootCmd.AddCommand(genManCmd)
 }
 
 func main() {

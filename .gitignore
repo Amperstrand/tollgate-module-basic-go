@@ -29,6 +29,7 @@ routers.env
 routers.lock
 
 # AI tooling — shared skills are symlinked, local memory is per-repo
+# (AGENTS.md is committed and shared; CLAUDE.md is a local symlink to it)
 .claude/
 CLAUDE.md
 agents/
@@ -37,6 +38,19 @@ memory-global
 memory-project/
 reference/
 .opencode/
+.omo/
 
 # Planning docs — internal, not for release
 docs/tmp/
+.omo/
+.playwright-mcp/
+*-plan.md
+PLAN-*.md
+TODO-*.md
+MOCK-*.md
+notepad*.md
+handover*.md
+ulw-*.md
+# Captive portal build output (built from source via packaging/portal-build.sh)
+packaging/files/tollgate-captive-portal-site/assets/
+nuts/

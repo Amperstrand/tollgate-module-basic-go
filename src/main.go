@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,22 +15,59 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/cli"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager"
+	"github.com/OpenTollGate/tollgate-module-basic-go/src/identity"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/merchant"
 	merchant_types "github.com/OpenTollGate/tollgate-module-basic-go/src/merchant_types"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/upstream_detector"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/upstream_session_manager"
+	"github.com/OpenTollGate/tollgate-module-basic-go/src/valve"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/wireless_gateway_manager"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 // Module-level logger with pre-configured module field
 var mainLogger = logrus.WithField("module", "main")
+
+var ipLimiters = make(map[string]*rate.Limiter)
+var ipLimitersMu sync.Mutex
+
+func getIPLimiter(ip string) *rate.Limiter {
+	ipLimitersMu.Lock()
+	defer ipLimitersMu.Unlock()
+	limiter, exists := ipLimiters[ip]
+	if !exists {
+		rpm := 10
+		if v := os.Getenv("TOLLGATE_RATE_LIMIT_RPM"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				rpm = parsed
+			}
+		}
+		limiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(rpm)), rpm)
+		ipLimiters[ip] = limiter
+	}
+	return limiter
+}
+
+func RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := getIP(r)
+		if !getIPLimiter(ip).Allow() {
+			mainLogger.WithField("ip", ip).Warn("Rate limit exceeded")
+			w.Header().Set("Retry-After", "6")
+			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
 
 // Global configuration variable
 // Define configFile at a higher scope
@@ -130,12 +168,27 @@ func InitializeGlobalLogger(logLevel string) {
 }
 
 func init() {
+	// Load CA cert pool with fallback for OpenWrt where SystemCertPool may fail
+	caPool, err := x509.SystemCertPool()
+	if err != nil || caPool == nil || len(caPool.Subjects()) == 0 {
+		mainLogger.WithError(err).Warn("SystemCertPool unavailable, loading CA certs from /etc/ssl/certs/ca-certificates.crt")
+		caPool = x509.NewCertPool()
+		pemData, readErr := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
+		if readErr != nil {
+			mainLogger.WithError(readErr).Fatal("Failed to load CA certs from /etc/ssl/certs/ca-certificates.crt — install ca-certificates package")
+		}
+		if !caPool.AppendCertsFromPEM(pemData) {
+			mainLogger.Fatal("No valid CA certificates found in /etc/ssl/certs/ca-certificates.crt")
+		}
+		mainLogger.Infof("Loaded %d CA cert subjects from /etc/ssl/certs/ca-certificates.crt", len(caPool.Subjects()))
+	}
+
 	http.DefaultTransport = &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: 10 * time.Second,
 		}).DialContext,
 		DisableKeepAlives:     true,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12},
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS13, RootCAs: caPool},
 		TLSHandshakeTimeout:   20 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		MaxIdleConns:          10,
@@ -143,8 +196,6 @@ func init() {
 		ForceAttemptHTTP2:     false,
 	}
 	http.DefaultClient.Timeout = 30 * time.Second
-
-	var err error
 
 	configPath, installPath, identitiesPath := getTollgatePaths()
 
@@ -158,6 +209,24 @@ func init() {
 	mainConfig = configManager.GetConfig()
 
 	InitializeGlobalLogger(mainConfig.LogLevel)
+
+	if mainConfig.RedirectURL != "" {
+		delaySeconds := mainConfig.AuthDelaySeconds
+		if delaySeconds <= 0 {
+			delaySeconds = 8
+		}
+		valve.AuthDelay = time.Duration(delaySeconds) * time.Second
+		mainLogger.WithFields(logrus.Fields{
+			"redirect_url": mainConfig.RedirectURL,
+			"auth_delay":   valve.AuthDelay,
+			"auth_delay_source": func() string {
+				if mainConfig.AuthDelaySeconds > 0 {
+					return "config"
+				}
+				return "default"
+			}(),
+		}).Info("Post-payment redirect enabled, delaying auth for redirect chain")
+	}
 
 	sharedConnector = &wireless_gateway_manager.Connector{}
 	if mainConfig != nil && mainConfig.UpstreamWifi.DHCPTimeoutSeconds > 0 {
@@ -313,14 +382,19 @@ func CorsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			"remote_addr": r.RemoteAddr,
 		}).Debug("CORS middleware processing request")
 
-		// Set CORS headers
+		// CORS policy (security): mirrors the Rust module's cors_response —
+		// echo the Origin only for local/private or same-host origins (the
+		// router's own portal is cross-origin once served from uhttpd :2051).
+		// Never a wildcard: this API is LAN-firewall-protected, not
+		// credential-protected, so "*" would let any website read responses
+		// from a browser on the TollGate network (OWASP).
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		origin := r.Header.Get("Origin")
-		if origin == "" || isLocalOrigin(origin) {
-			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-			}
+		if origin != "" && origin != "null" && (isLocalOrigin(origin) || isSameHost(origin, r.Host)) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			// Cache-safe: the echo decision varies per Origin (MDN).
+			w.Header().Add("Vary", "Origin")
 		}
 
 		// Handle preflight OPTIONS requests
@@ -352,7 +426,24 @@ func handleDetails(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, merchantProvider.inner.GetMerchant().GetAdvertisement())
 }
 
+// NUT #00: `cashu` is the Cashu token prefix. `[version]` is a single `base64_urlsafe` character to denote the token format version.
+
 // handleRootPost handles POST requests to the root endpoint
+func extractCashuToken(body []byte) (token string, event *nostr.Event) {
+	var ev nostr.Event
+	err := json.Unmarshal(body, &ev)
+	if err == nil && ev.Kind == 21000 {
+		for _, tag := range ev.Tags {
+			if len(tag) >= 2 && tag[0] == "payment" {
+				return tag[1], &ev
+			}
+		}
+		return "", &ev
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
+// NUT #00: Serialized tokens have a Cashu token prefix, a versioning flag, and the token.
 func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	// Log the request details
 	mainLogger.WithFields(logrus.Fields{
@@ -365,13 +456,21 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "text/plain" && contentType != "application/json" && contentType != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnsupportedMediaType)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unsupported Media Type"})
+		return
+	}
+
 	// Get MAC address from request
 	ip := getIP(r)
 	macAddress, err := getMacAddress(ip)
 	if err != nil {
-		mainLogger.WithError(err).Error("Error getting MAC address")
+		mainLogger.WithError(err).Error("MAC address lookup failed")
 		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "mac-address-lookup-failed",
-			fmt.Sprintf("Failed to lookup MAC address for IP %s: %v", ip, err), "")
+			"Failed to identify device", "")
 		return
 	}
 
@@ -379,9 +478,9 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
-		mainLogger.WithError(err).Error("Error reading request body")
+		mainLogger.WithError(err).Error("Request body read failed")
 		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "invalid-request",
-			fmt.Sprintf("Error reading request body: %v", err), macAddress)
+			"Invalid request", macAddress)
 		return
 	}
 
@@ -389,42 +488,24 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	bodyStr := string(body)
 	mainLogger.WithField("body", bodyStr).Debug("Received POST request")
 
-	var cashuToken string
+	cashuToken, nostrEvent := extractCashuToken(body)
 
-	// Try to parse as JSON (Nostr event format)
-	var event nostr.Event
-	err = json.Unmarshal(body, &event)
-
-	if err == nil && event.Kind == 21000 {
-		// It's a valid Nostr event (signature validation is now optional)
+	if nostrEvent != nil {
 		mainLogger.WithFields(logrus.Fields{
-			"event_id":   event.ID,
-			"created_at": event.CreatedAt,
-			"kind":       event.Kind,
-			"pubkey":     event.PubKey,
+			"event_id":   nostrEvent.ID,
+			"created_at": nostrEvent.CreatedAt,
+			"kind":       nostrEvent.Kind,
+			"pubkey":     nostrEvent.PubKey,
 		}).Info("Parsed nostr event (signature not validated)")
 
-		// Extract payment token from event
-		var paymentToken string
-		for _, tag := range event.Tags {
-			if len(tag) >= 2 && tag[0] == "payment" {
-				paymentToken = tag[1]
-				break
-			}
-		}
-
-		if paymentToken == "" {
+		if cashuToken == "" {
 			mainLogger.Error("No payment tag found in event")
 			sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusBadRequest, "error", "invalid-event",
 				"No payment tag found in event", macAddress)
 			return
 		}
-
-		cashuToken = paymentToken
 	} else {
-		// Treat as plain Cashu token string
 		mainLogger.Info("Treating request as plain Cashu token string")
-		cashuToken = strings.TrimSpace(bodyStr)
 	}
 
 	// Process payment with cashu token and MAC address
@@ -436,7 +517,7 @@ func HandleRootPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		mainLogger.WithError(err).Error("Payment processing failed")
 		sendNoticeResponse(w, merchantProvider.inner.GetMerchant(), http.StatusInternalServerError, "error", "internal-error",
-			fmt.Sprintf("Internal error during payment processing: %v", err), macAddress)
+			"Payment processing failed", macAddress)
 		return
 	}
 
@@ -473,6 +554,29 @@ func sendNoticeResponse(w http.ResponseWriter, m merchant.MerchantInterface, sta
 }
 
 // handleRoot routes requests based on method
+func HandleUsage(w http.ResponseWriter, r *http.Request) {
+	ip := getIP(r)
+	macAddress, err := getMacAddress(ip)
+	if err != nil {
+		mainLogger.WithError(err).Error("Error getting MAC address for /usage")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "-1/-1")
+		return
+	}
+	usageStr, err := merchantProvider.inner.GetMerchant().GetUsage(macAddress)
+	if err != nil {
+		mainLogger.WithFields(logrus.Fields{
+			"mac":   macAddress,
+			"error": err,
+		}).Error("Error getting usage")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "-1/-1")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, usageStr)
+}
+
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		HandleRootPost(w, r)
@@ -556,7 +660,7 @@ func HandleBalance(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithFields(logrus.Fields{"mac": macAddress, "error": err}).Error("Error getting balance usage")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(balanceResponse{Status: 0, Error: err.Error()})
+		json.NewEncoder(w).Encode(balanceResponse{Status: 0, Error: "failed to retrieve usage data"})
 		return
 	}
 	if usage == "-1/-1" {
@@ -571,7 +675,7 @@ func HandleBalance(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithFields(logrus.Fields{"mac": macAddress, "usage": usage, "error": err}).Error("Error parsing usage string")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(balanceResponse{Status: 0, Error: err.Error()})
+		json.NewEncoder(w).Encode(balanceResponse{Status: 0, Error: "failed to process usage data"})
 		return
 	}
 
@@ -647,7 +751,7 @@ func handleLightningInvoicePost(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithError(err).Warn("Failed to create lightning invoice")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(lightningInvoiceResponse{Status: 0, Error: err.Error()})
+		json.NewEncoder(w).Encode(lightningInvoiceResponse{Status: 0, Error: "failed to create lightning invoice"})
 		return
 	}
 
@@ -695,7 +799,7 @@ func handleLightningInvoiceGet(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithError(err).Warn("Failed to fetch lightning invoice status")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
-		json.NewEncoder(w).Encode(lightningInvoiceResponse{Status: 0, Error: err.Error()})
+		json.NewEncoder(w).Encode(lightningInvoiceResponse{Status: 0, Error: "failed to fetch invoice status"})
 		return
 	}
 
@@ -722,8 +826,7 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithField("remote_addr", r.RemoteAddr).Debug("Hit / endpoint")
-
-		CorsMiddleware(HandleRoot)(w, r)
+		RateLimitMiddleware(CorsMiddleware(HandleRoot))(w, r)
 	})
 
 	http.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) {
@@ -743,32 +846,38 @@ func main() {
 
 	http.HandleFunc("/usage", func(w http.ResponseWriter, r *http.Request) {
 		mainLogger.WithField("remote_addr", r.RemoteAddr).Debug("Hit /usage endpoint")
-
-		// Get MAC address from request
-		ip := getIP(r)
-		macAddress, err := getMacAddress(ip)
-		if err != nil {
-			mainLogger.WithError(err).Error("Error getting MAC address for /usage")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "-1/-1")
-			return
-		}
-
-		// Get usage from merchant
-		usageStr, err := merchantProvider.inner.GetMerchant().GetUsage(macAddress)
-		if err != nil {
-			mainLogger.WithFields(logrus.Fields{
-				"mac":   macAddress,
-				"error": err,
-			}).Error("Error getting usage")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "-1/-1")
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, usageStr)
+		CorsMiddleware(HandleUsage)(w, r)
 	})
+
+	// --- Identity derivation (additive, optional) --------------------------
+	// Derive network identity (npub, IPv4, MACs, BIP39 seed) from the existing
+	// merchant private key in identities.json (owned_identities[0].privatekey).
+	// This is a bonus feature: if identities.json is missing, malformed, or has
+	// no usable key, the routes are simply not registered and TollGate boots and
+	// serves all existing endpoints normally. No existing endpoint is touched.
+	identityPrivKey := ""
+	if ids := configManager.GetIdentities(); ids != nil && len(ids.OwnedIdentities) > 0 {
+		identityPrivKey = ids.OwnedIdentities[0].PrivateKey
+	}
+	if identityPrivKey == "" {
+		mainLogger.Warn("identity: no merchant private key in identities.json — /identity routes disabled")
+	} else if _, err := identity.Derive(identityPrivKey); err != nil {
+		mainLogger.WithError(err).Warn("identity: merchant private key invalid — /identity routes disabled")
+		identityPrivKey = ""
+	}
+	if identityPrivKey != "" {
+		http.HandleFunc("/identity", func(w http.ResponseWriter, r *http.Request) {
+			mainLogger.WithField("remote_addr", r.RemoteAddr).Debug("Hit /identity endpoint")
+			CorsMiddleware(handleIdentityDerive(identityPrivKey))(w, r)
+		})
+		// reveal-seed accepts a 12-word BIP39 mnemonic and raw private key —
+		// POST-only so the request is intentional and never cached/prefetched.
+		http.HandleFunc("/identity/reveal-seed", func(w http.ResponseWriter, r *http.Request) {
+			mainLogger.WithField("remote_addr", r.RemoteAddr).Warn("Hit /identity/reveal-seed endpoint (sensitive)")
+			CorsMiddleware(handleIdentityRevealSeed(identityPrivKey))(w, r)
+		})
+		mainLogger.Info("identity: /identity and /identity/reveal-seed routes registered")
+	}
 
 	mainLogger.Info("Starting HTTP server on all interfaces...")
 	server := &http.Server{
@@ -833,6 +942,26 @@ func init() {
 	}
 }
 
+// isSameHost reports whether the Origin's host matches the host the client
+// addressed this API by, ignoring port: origins are scheme+host+port, so the
+// router's own portal served from another port (uhttpd :2051 calling the API
+// on :2121) is cross-origin yet must stay allowed.
+func isSameHost(origin, requestHost string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	originHost := strings.ToLower(u.Hostname())
+	if originHost == "" {
+		return false
+	}
+	reqHost := strings.ToLower(requestHost)
+	if h, _, err := net.SplitHostPort(reqHost); err == nil {
+		reqHost = h
+	}
+	return originHost == reqHost
+}
+
 func isLocalOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -867,4 +996,51 @@ func isLocalOrigin(origin string) bool {
 		}
 	}
 	return false
+}
+
+// handleIdentityDerive returns an http.HandlerFunc that serves the public,
+// non-sensitive derived identity (npub, IPv4, MACs) as JSON for the given
+// merchant private key. Registered at GET /identity.
+func handleIdentityDerive(privKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		derived, err := identity.Derive(privKey)
+		if err != nil {
+			mainLogger.WithError(err).Error("identity: derive failed")
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(derived)
+	}
+}
+
+// handleIdentityRevealSeed accepts a 12-word BIP39 mnemonic in the POST body
+// and returns the full identity (private key, npub, IPv4, MACs, mnemonic).
+// POST-only: a non-POST request gets 405 Method Not Allowed.
+// Registered at POST /identity/reveal-seed.
+func handleIdentityRevealSeed(_ string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isLocalRequest(r) {
+			http.Error(w, "forbidden: loopback only", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed: use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1024))
+		if err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		mnemonic := strings.TrimSpace(string(body))
+		full, err := identity.DeriveFromMnemonic(mnemonic)
+		if err != nil {
+			mainLogger.WithError(err).Error("identity: mnemonic recovery failed")
+			http.Error(w, "invalid mnemonic", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(full)
+	}
 }

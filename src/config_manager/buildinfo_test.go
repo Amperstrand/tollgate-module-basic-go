@@ -49,7 +49,7 @@ func TestNewDefaultConfig_MintsForBranch(t *testing.T) {
 			t.Fatalf("expected 2 accepted mints on main, got %d", len(cfg.AcceptedMints))
 		}
 		for _, m := range cfg.AcceptedMints {
-			if m.URL == "https://nofee.testnut.cashu.space" {
+			if m.URL == "https://testnut.cashu.exchange" {
 				t.Error("test mint should not be present on main branch")
 			}
 		}
@@ -65,7 +65,7 @@ func TestNewDefaultConfig_MintsForBranch(t *testing.T) {
 
 		found := false
 		for _, m := range cfg.AcceptedMints {
-			if m.URL == "https://nofee.testnut.cashu.space" {
+			if m.URL == "https://testnut.cashu.exchange" {
 				found = true
 				if m.MinBalance != 0 {
 					t.Errorf("expected test mint MinBalance=0, got %d", m.MinBalance)
@@ -114,14 +114,14 @@ func TestNewDefaultConfig_MintsForBranch(t *testing.T) {
 
 func TestDefaultTestMint(t *testing.T) {
 	mint := defaultTestMint()
-	if mint.URL != "https://nofee.testnut.cashu.space" {
+	if mint.URL != "https://testnut.cashu.exchange" {
 		t.Errorf("expected test mint URL, got %s", mint.URL)
 	}
 	if mint.PricePerStep != 1 {
 		t.Errorf("expected PricePerStep=1, got %d", mint.PricePerStep)
 	}
-	if mint.PriceUnit != "sats" {
-		t.Errorf("expected PriceUnit=sats, got %s", mint.PriceUnit)
+	if mint.PriceUnit != "sat" {
+		t.Errorf("expected PriceUnit=sat, got %s", mint.PriceUnit)
 	}
 }
 

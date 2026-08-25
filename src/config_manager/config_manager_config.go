@@ -22,25 +22,28 @@ type Config struct {
 	Metric                 string                       `json:"metric"`
 	ShowSetup              bool                         `json:"show_setup"`
 	ResellerMode           bool                         `json:"reseller_mode"`
+	RedirectURL            string                       `json:"redirect_url,omitempty"`
+	AuthDelaySeconds       int                          `json:"auth_delay_seconds,omitempty"`
 	UpstreamDetector       UpstreamDetectorConfig       `json:"upstream_detector"`
 	UpstreamSessionManager UpstreamSessionManagerConfig `json:"upstream_session_manager"`
 	UpstreamWifi           UpstreamWifiConfig           `json:"upstream_wifi"`
 }
 
 type UpstreamWifiConfig struct {
-	ScanIntervalSeconds     int `json:"scan_interval_seconds"`
-	FastCheckSeconds        int `json:"fast_check_seconds"`
-	LostThreshold           int `json:"lost_threshold"`
-	HysteresisDB            int `json:"hysteresis_db"`
-	SignalFloor             int `json:"signal_floor"`
-	BlacklistTTLMinutes     int `json:"blacklist_ttl_minutes"`
-	EmergencyPenalty        int `json:"emergency_penalty"`
-	MaxConsecutiveFailures  int `json:"max_consecutive_failures"`
-	SwitchCooldownMinutes   int `json:"switch_cooldown_minutes"`
-	StartupGraceSeconds     int `json:"startup_grace_seconds"`
-	PostSwitchWaitSeconds   int `json:"post_switch_wait_seconds"`
-	DHCPTimeoutSeconds      int `json:"dhcp_timeout_seconds"`
-	ManualPauseSeconds      int `json:"manual_pause_seconds"`
+	ScanIntervalSeconds    int  `json:"scan_interval_seconds"`
+	FastCheckSeconds       int  `json:"fast_check_seconds"`
+	LostThreshold          int  `json:"lost_threshold"`
+	HysteresisDB           int  `json:"hysteresis_db"`
+	SignalFloor            int  `json:"signal_floor"`
+	BlacklistTTLMinutes    int  `json:"blacklist_ttl_minutes"`
+	EmergencyPenalty       int  `json:"emergency_penalty"`
+	MaxConsecutiveFailures int  `json:"max_consecutive_failures"`
+	SwitchCooldownMinutes  int  `json:"switch_cooldown_minutes"`
+	StartupGraceSeconds    int  `json:"startup_grace_seconds"`
+	PostSwitchWaitSeconds  int  `json:"post_switch_wait_seconds"`
+	DHCPTimeoutSeconds     int  `json:"dhcp_timeout_seconds"`
+	ManualPauseSeconds     int  `json:"manual_pause_seconds"`
+	VendorIEDiscovery      bool `json:"vendor_ie_discovery"`
 }
 
 // MintConfig holds configuration for a specific mint.
@@ -161,7 +164,7 @@ func SaveConfig(filePath string, config *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filePath, data, 0600)
 }
 
 func defaultProductionMints() []MintConfig {
@@ -173,7 +176,7 @@ func defaultProductionMints() []MintConfig {
 			PayoutIntervalSeconds:   60,
 			MinPayoutAmount:         128,
 			PricePerStep:            1,
-			PriceUnit:               "sats",
+			PriceUnit:               "sat",
 			MinPurchaseSteps:        0,
 		},
 		{
@@ -183,7 +186,7 @@ func defaultProductionMints() []MintConfig {
 			PayoutIntervalSeconds:   60,
 			MinPayoutAmount:         128,
 			PricePerStep:            1,
-			PriceUnit:               "sats",
+			PriceUnit:               "sat",
 			MinPurchaseSteps:        0,
 		},
 	}
@@ -191,13 +194,13 @@ func defaultProductionMints() []MintConfig {
 
 func defaultTestMint() MintConfig {
 	return MintConfig{
-		URL:                     "https://nofee.testnut.cashu.space",
+		URL:                     "https://testnut.cashu.exchange",
 		MinBalance:              0,
 		BalanceTolerancePercent: 0,
 		PayoutIntervalSeconds:   999999,
 		MinPayoutAmount:         999999,
 		PricePerStep:            1,
-		PriceUnit:               "sats",
+		PriceUnit:               "sat",
 		MinPurchaseSteps:        0,
 	}
 }
@@ -318,7 +321,6 @@ func EnsureDefaultConfig(filePath string) (*Config, error) {
 	if profitShareErr != nil {
 		log.Printf("WARNING: Invalid profit_share, resetting to defaults: %v", profitShareErr)
 		config.ProfitShare = defaultConfig.ProfitShare
-		return &config, SaveConfig(filePath, &config)
 	}
 	if config.ConfigVersion != defaultConfig.ConfigVersion {
 		log.Printf("INFO: Config version %s → %s, migrating (preserving user settings)", config.ConfigVersion, defaultConfig.ConfigVersion)
@@ -326,6 +328,9 @@ func EnsureDefaultConfig(filePath string) (*Config, error) {
 			log.Printf("WARN: Failed to backup config before migration (continuing): %v", backupErr)
 		}
 		migrateConfig(&config, defaultConfig)
+		return &config, SaveConfig(filePath, &config)
+	}
+	if profitShareErr != nil {
 		return &config, SaveConfig(filePath, &config)
 	}
 
@@ -338,4 +343,10 @@ func migrateConfig(config *Config, defaults *Config) {
 		log.Printf("INFO: Populated UpstreamWifi defaults (was missing in v%s)", config.ConfigVersion)
 	}
 	config.ConfigVersion = defaults.ConfigVersion
+	for i := range config.AcceptedMints {
+		if config.AcceptedMints[i].PriceUnit == "sats" {
+			config.AcceptedMints[i].PriceUnit = "sat"
+			log.Printf("INFO: Migrated price_unit sats to sat for mint %s", config.AcceptedMints[i].URL)
+		}
+	}
 }

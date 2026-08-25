@@ -160,8 +160,6 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
 
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DATA) $(PKG_MAKEFILE_DIR)files/etc/config/firewall-tollgate $(1)/etc/config/
 
 	$(INSTALL_DIR) $(1)/usr/local/bin
 	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
@@ -183,6 +181,12 @@ define Package/$(PKG_NAME)/install
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/etc/hotplug.d/iface/95-tollgate-restart $(1)/etc/hotplug.d/iface/
+
+	$(INSTALL_DIR) $(1)/etc/nftables.d
+	$(INSTALL_DATA) $(PKG_MAKEFILE_DIR)files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
+
+	$(INSTALL_DIR) $(1)/usr/share/man/man8
+	$(INSTALL_DATA) $(PKG_MAKEFILE_DIR)files/man/man8/*.8 $(1)/usr/share/man/man8/
 endef
 
 FILES_$(PKG_NAME) += \
@@ -191,14 +195,14 @@ FILES_$(PKG_NAME) += \
 	/usr/bin/tollgate-apply-ssl \
 	/usr/bin/tollgate-remove-ssl \
 	/etc/init.d/tollgate-wrt \
-	/etc/config/firewall-tollgate \
 	/usr/local/bin/first-login-setup \
 	/etc/uci-defaults/90-tollgate-captive-portal-symlink \
 	/etc/uci-defaults/99-tollgate-setup \
 	/etc/tollgate/tollgate-captive-portal-site/* \
 	/etc/crontabs/root \
 	/lib/upgrade/keep.d/tollgate \
-	/etc/hotplug.d/iface/95-tollgate-restart
+	/etc/hotplug.d/iface/95-tollgate-restart \
+	/etc/nftables.d/20-nds-enforce.nft
 
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

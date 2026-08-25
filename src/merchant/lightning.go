@@ -5,18 +5,22 @@ package merchant
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 
+	"github.com/OpenTollGate/tollgate-module-basic-go/src/tollwallet"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/utils"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/valve"
-	"github.com/Origami74/gonuts-tollgate/cashu/nuts/nut04"
 )
 
 var ErrQuoteNotFound = errors.New("lightning quote not found")
 
 const (
 	lightningQuoteStateCacheTTL     = 2 * time.Second
-	lightningQuoteMonitorInterval   = 2 * time.Second
+	lightningQuoteMonitorInterval   = 5 * time.Second
+	lightningQuoteMonitorMaxBackoff = 30 * time.Second
+	lightningQuoteMonitorMaxJitter  = 500 * time.Millisecond
 	lightningQuoteCleanupInterval   = 1 * time.Minute
 	lightningQuoteExpiryGracePeriod = 5 * time.Minute
 	lightningQuoteMaxAge            = 30 * time.Minute
@@ -43,6 +47,7 @@ type LightningQuoteStatus struct {
 }
 
 type lightningQuoteRecord struct {
+	Bolt11         string
 	MacAddress     string
 	MintURL        string
 	Amount         uint64
@@ -52,7 +57,7 @@ type lightningQuoteRecord struct {
 	CompletedAt    time.Time
 	SessionGranted bool
 	Processing     bool
-	CachedState    nut04.State
+	CachedState    tollwallet.MintQuoteState
 	CachedStateAt  time.Time
 	HasCachedState bool
 }
@@ -76,7 +81,8 @@ func (m *Merchant) RequestLightningInvoice(macAddress, mintURL string, amount ui
 	}
 
 	m.lightningQuoteMu.Lock()
-	m.lightningQuotes[quote.Quote] = &lightningQuoteRecord{
+	m.lightningQuotes[quote.QuoteID] = &lightningQuoteRecord{
+		Bolt11:     quote.Request,
 		MacAddress: macAddress,
 		MintURL:    mintURL,
 		Amount:     amount,
@@ -84,11 +90,12 @@ func (m *Merchant) RequestLightningInvoice(macAddress, mintURL string, amount ui
 		CreatedAt:  time.Now(),
 	}
 	m.lightningQuoteMu.Unlock()
+	m.persistLightningQuotes()
 
-	go m.monitorLightningQuote(quote.Quote)
+	go m.monitorLightningQuote(quote.QuoteID)
 
 	return &LightningInvoice{
-		QuoteID: quote.Quote,
+		QuoteID: quote.QuoteID,
 		Invoice: quote.Request,
 		MintURL: mintURL,
 		Amount:  amount,
@@ -109,7 +116,7 @@ func (m *Merchant) GetLightningInvoiceStatus(quoteID, macAddress string) (*Light
 	}
 
 	switch state {
-	case nut04.Paid, nut04.Issued:
+	case tollwallet.StatePaid, tollwallet.StateIssued:
 		if err := m.ensureLightningAccessGranted(quoteID, state); err != nil {
 			return nil, err
 		}
@@ -122,7 +129,7 @@ func (m *Merchant) GetLightningInvoiceStatus(quoteID, macAddress string) (*Light
 
 	statusState := state.String()
 	if record.SessionGranted {
-		statusState = nut04.Issued.String()
+		statusState = tollwallet.StateIssued.String()
 	}
 
 	return &LightningQuoteStatus{
@@ -161,7 +168,7 @@ func (m *Merchant) getLightningQuoteRecordForMAC(quoteID, macAddress string) (*l
 	return record, nil
 }
 
-func (m *Merchant) getLightningQuoteState(quoteID string) (nut04.State, error) {
+func (m *Merchant) getLightningQuoteState(quoteID string) (tollwallet.MintQuoteState, error) {
 	m.lightningQuoteMu.RLock()
 	record, ok := m.lightningQuotes[quoteID]
 	if ok && record.HasCachedState && time.Since(record.CachedStateAt) < lightningQuoteStateCacheTTL {
@@ -171,20 +178,20 @@ func (m *Merchant) getLightningQuoteState(quoteID string) (nut04.State, error) {
 	}
 	m.lightningQuoteMu.RUnlock()
 
-	quote, err := m.tollwallet.GetMintQuoteState(quoteID)
+	state, err := m.tollwallet.GetMintQuoteState(quoteID)
 	if err != nil {
 		return 0, err
 	}
 
 	m.lightningQuoteMu.Lock()
 	if record, ok := m.lightningQuotes[quoteID]; ok {
-		record.CachedState = quote.State
+		record.CachedState = state
 		record.CachedStateAt = time.Now()
 		record.HasCachedState = true
 	}
 	m.lightningQuoteMu.Unlock()
 
-	return quote.State, nil
+	return state, nil
 }
 
 func (m *Merchant) startLightningQuoteJanitor() {
@@ -198,43 +205,75 @@ func (m *Merchant) startLightningQuoteJanitor() {
 }
 
 func (m *Merchant) monitorLightningQuote(quoteID string) {
-	ticker := time.NewTicker(lightningQuoteMonitorInterval)
-	defer ticker.Stop()
+	backoff := lightningQuoteMonitorInterval
 
 	for {
 		record, err := m.getLightningQuoteRecord(quoteID)
 		if err != nil {
+			log.Printf("monitorLightningQuote: stopping for %s — record not found: %v", quoteID, err)
 			return
 		}
 
 		now := time.Now()
 		if m.shouldDeleteLightningQuote(record, now) {
 			m.deleteLightningQuote(quoteID)
+			log.Printf("monitorLightningQuote: stopping for %s — quote expired/settled", quoteID)
 			return
 		}
 
 		state, err := m.getLightningQuoteState(quoteID)
-		if err == nil {
-			switch state {
-			case nut04.Paid, nut04.Issued:
-				if err := m.ensureLightningAccessGranted(quoteID, state); err == nil {
-					return
-				}
+		if err != nil {
+			log.Printf("monitorLightningQuote: mint state check failed for %s: %v", quoteID, err)
+			backoff = nextLightningBackoff(backoff)
+			jitterSleep(backoff)
+			continue
+		}
+
+		if state == tollwallet.StatePaid || state == tollwallet.StateIssued {
+			if err := m.ensureLightningAccessGranted(quoteID, state); err == nil {
+				log.Printf("monitorLightningQuote: stopping for %s — access granted", quoteID)
+				return
+			} else {
+				log.Printf("monitorLightningQuote: ensureLightningAccessGranted failed for %s: %v", quoteID, err)
+				backoff = nextLightningBackoff(backoff)
+				jitterSleep(backoff)
+				continue
 			}
 		}
 
-		<-ticker.C
+		backoff = lightningQuoteMonitorInterval
+		jitterSleep(lightningQuoteMonitorInterval)
 	}
+}
+
+// nextLightningBackoff doubles the current backoff interval, capped at
+// lightningQuoteMonitorMaxBackoff.
+func nextLightningBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > lightningQuoteMonitorMaxBackoff {
+		next = lightningQuoteMonitorMaxBackoff
+	}
+	return next
+}
+
+// jitterSleep sleeps for d plus a random jitter in [0, lightningQuoteMonitorMaxJitter).
+func jitterSleep(d time.Duration) {
+	jitter := time.Duration(rand.Int63n(int64(lightningQuoteMonitorMaxJitter)))
+	time.Sleep(d + jitter)
 }
 
 func (m *Merchant) cleanupStaleLightningQuotes(now time.Time) {
 	m.lightningQuoteMu.Lock()
-	defer m.lightningQuoteMu.Unlock()
-
+	deleted := false
 	for quoteID, record := range m.lightningQuotes {
 		if m.shouldDeleteLightningQuote(record, now) {
 			delete(m.lightningQuotes, quoteID)
+			deleted = true
 		}
+	}
+	m.lightningQuoteMu.Unlock()
+	if deleted {
+		m.persistLightningQuotes()
 	}
 }
 
@@ -278,9 +317,93 @@ func (m *Merchant) deleteLightningQuote(quoteID string) {
 	m.lightningQuoteMu.Lock()
 	delete(m.lightningQuotes, quoteID)
 	m.lightningQuoteMu.Unlock()
+	m.persistLightningQuotes()
 }
 
-func (m *Merchant) ensureLightningAccessGranted(quoteID string, state nut04.State) error {
+// persistLightningQuotes writes a snapshot of every lightning quote to disk so
+// the in-flight set survives a restart. It is a no-op when no quoteStore is
+// configured (e.g. unit tests that construct &Merchant{} directly). Write
+// errors are logged but never propagated: losing the persistence side-effect
+// must not break payment processing.
+func (m *Merchant) persistLightningQuotes() {
+	if m.quoteStore == nil {
+		return
+	}
+
+	m.lightningQuoteMu.RLock()
+	snapshot := make(map[string]*lightningQuoteRecord, len(m.lightningQuotes))
+	for id, rec := range m.lightningQuotes {
+		cp := *rec
+		snapshot[id] = &cp
+	}
+	m.lightningQuoteMu.RUnlock()
+
+	if err := m.quoteStore.saveQuotes(snapshot); err != nil {
+		log.Printf("ERROR: failed to persist lightning quotes: %v", err)
+	}
+}
+
+// loadLightningQuotesFromDisk restores persisted quotes at startup. Expired or
+// fully-settled quotes are dropped; unsettled (unpaid or recently-paid) quotes
+// are reloaded into the in-memory map and their monitor goroutines relaunched
+// so access is granted if the invoice was paid while the process was down.
+func (m *Merchant) loadLightningQuotesFromDisk() {
+	if m.quoteStore == nil {
+		return
+	}
+
+	persisted, err := m.quoteStore.loadQuotes()
+	if err != nil {
+		log.Printf("ERROR: failed to load persisted lightning quotes: %v", err)
+		return
+	}
+	if len(persisted) == 0 {
+		return
+	}
+
+	now := time.Now()
+	relaunched := 0
+	for quoteID, pq := range persisted {
+		rec := &lightningQuoteRecord{
+			Bolt11:         pq.Bolt11,
+			MacAddress:     pq.MacAddress,
+			MintURL:        pq.MintURL,
+			Amount:         pq.Amount,
+			Expiry:         pq.Expiry,
+			Allotment:      pq.Allotment,
+			CreatedAt:      pq.CreatedAt,
+			CompletedAt:    pq.CompletedAt,
+			SessionGranted: pq.SessionGranted,
+		}
+
+		// Drop quotes that are expired, too old, or past the settled
+		// retention window — the janitor would remove them anyway.
+		if m.shouldDeleteLightningQuote(rec, now) {
+			continue
+		}
+
+		m.lightningQuoteMu.Lock()
+		m.lightningQuotes[quoteID] = rec
+		m.lightningQuoteMu.Unlock()
+
+		// Only quotes that still need monitoring are relaunched. A quote
+		// whose session was already granted is kept (so status lookups
+		// succeed) but does not need a polling goroutine.
+		if !rec.SessionGranted {
+			go m.monitorLightningQuote(quoteID)
+			relaunched++
+		}
+	}
+
+	if relaunched > 0 {
+		log.Printf("Restored %d lightning quote(s) from disk, %d monitor(s) relaunched", len(persisted), relaunched)
+	}
+
+	// Persist again so the on-disk file reflects any quotes dropped above.
+	m.persistLightningQuotes()
+}
+
+func (m *Merchant) ensureLightningAccessGranted(quoteID string, state tollwallet.MintQuoteState) error {
 	m.lightningQuoteMu.Lock()
 	record, ok := m.lightningQuotes[quoteID]
 	if !ok {
@@ -296,8 +419,8 @@ func (m *Merchant) ensureLightningAccessGranted(quoteID string, state nut04.Stat
 	m.lightningQuoteMu.Unlock()
 
 	amountToGrant := recordCopy.Amount
-	if state == nut04.Paid {
-		mintedAmount, err := m.tollwallet.MintQuoteTokens(quoteID)
+	if state == tollwallet.StatePaid {
+		mintedAmount, err := m.tollwallet.MintTokens(quoteID)
 		if err != nil {
 			m.lightningQuoteMu.Lock()
 			if record, ok := m.lightningQuotes[quoteID]; ok {
@@ -327,6 +450,7 @@ func (m *Merchant) ensureLightningAccessGranted(quoteID string, state nut04.Stat
 		record.CompletedAt = time.Now()
 	}
 	m.lightningQuoteMu.Unlock()
+	m.persistLightningQuotes()
 
 	return nil
 }

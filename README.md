@@ -21,8 +21,9 @@ automatically.
 - **NoDogSplash (ndsctl)** — the captive portal / gate that
   authorizes MACs
 
-Wire protocol docs are under
-[docs/protocol/](docs/protocol/). The pre-built captive-portal site
+Wire protocol docs live in the canonical spec repo:
+[OpenTollGate/tollgate](https://github.com/OpenTollGate/tollgate).
+The pre-built captive-portal site
 that ships in [packaging/files/tollgate-captive-portal-site/](packaging/files/tollgate-captive-portal-site/)
 is generated from
 [OpenTollGate/tollgate-captive-portal-site](https://github.com/OpenTollGate/tollgate-captive-portal-site).
@@ -53,7 +54,7 @@ Source lives under [src/](src/). Go tooling runs from there
 | [config_manager](src/config_manager/) | Schema, loading, migrations, validation, backups of `/etc/tollgate/config.json`. |
 | [tollwallet](src/tollwallet/) | Cashu wallet operations (mint client, balance tracking, melt). |
 | [lightning](src/lightning/) | LNURL-p / Lightning address resolution and invoice fetching for payouts. |
-| [cli](src/cli/) | `tollgate` CLI for `status`, `start`/`stop`/`restart`, `logs`, `version`. Entry point: [src/cmd/tollgate-cli](src/cmd/tollgate-cli/). |
+| [cli](src/cli/) | `tollgate` CLI for service control, wallet, private network, upstream Wi-Fi, config, and health. Entry point: [src/cmd/tollgate-cli](src/cmd/tollgate-cli/). See [docs/operator-guide.md](docs/operator-guide.md). |
 | [tollgate_protocol](src/tollgate_protocol/) | Wire-type definitions shared across modules. |
 
 ## Installation
@@ -155,8 +156,12 @@ interfaces *the router itself serves on* to prevent self-probing.
 Unit tests, from the [src/](src/) directory:
 
 ```sh
-cd src && go test ./...
+cd src && go test -tags testenv ./...
 ```
+
+The `testenv` build tag provisions a hermetic temp config dir so the main
+package's `init()` does not depend on `/etc/tollgate/config.json` — letting the
+suite run off-router (CI, dev machines). The tag is a no-op for subpackages.
 
 A single package:
 
@@ -184,6 +189,7 @@ See [tests/README.md](tests/README.md) for how to wire up the test fleet.
 
 Design and protocol docs live under [docs/](docs/):
 
+- [docs/operator-guide.md](docs/operator-guide.md) — practical CLI reference for router operators
 - [docs/merchant.md](docs/merchant.md)
 - [docs/upstream_session_manager.md](docs/upstream_session_manager.md) — module internals + end-to-end cross-component flow
 - [docs/data-session-management.md](docs/data-session-management.md)

@@ -207,6 +207,19 @@ func (c *Connector) ExecuteUCI(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
+func (c *Connector) ExecuteUbus(args ...string) (string, error) {
+	cmd := exec.Command("ubus", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ubus %s: %w (stderr: %s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+
+	return stdout.String(), nil
+}
+
 func (c *Connector) reloadWifi() error {
 	cmd := exec.Command("wifi", "reload")
 	var stderr bytes.Buffer
@@ -1225,6 +1238,9 @@ func (c *Connector) EnsureRadiosEnabled() error {
 func (c *Connector) getRadiosFromConfig() ([]string, error) {
 	data, err := os.ReadFile("/etc/config/wireless")
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to read wireless config: %w", err)
 	}
 

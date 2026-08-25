@@ -48,6 +48,14 @@ func GetConfigSchema() []FieldSchema {
 			Description: "Enable reseller mode for upstream gateway discovery", Default: false, Required: true, Editable: true,
 		},
 		{
+			Name: "AuthDelaySeconds", JSONKey: "auth_delay_seconds", Type: "int",
+			Description: "Delay in seconds before authorizing MAC after payment (0 = immediate)", Default: 0, Required: false, Editable: true, Min: 0, Max: 300,
+		},
+		{
+			Name: "RedirectURL", JSONKey: "redirect_url", Type: "string",
+			Description: "URL to redirect clients to after payment (empty = no redirect)", Default: "", Required: false, Editable: true,
+		},
+		{
 			Name: "AcceptedMints", JSONKey: "accepted_mints", Type: "array",
 			Description: "List of accepted Cashu mints", Required: true, Editable: true,
 			Children: []FieldSchema{
@@ -57,7 +65,7 @@ func GetConfigSchema() []FieldSchema {
 				{Name: "PayoutIntervalSeconds", JSONKey: "payout_interval_seconds", Type: "uint64", Description: "Seconds between payout rounds", Default: uint64(60), Required: true, Editable: true},
 				{Name: "MinPayoutAmount", JSONKey: "min_payout_amount", Type: "uint64", Description: "Minimum payout amount in sats", Default: uint64(128), Required: true, Editable: true},
 				{Name: "PricePerStep", JSONKey: "price_per_step", Type: "uint64", Description: "Price per step in sats", Default: uint64(1), Required: true, Editable: true, Min: uint64(1)},
-				{Name: "PriceUnit", JSONKey: "price_unit", Type: "string", Description: "Price unit", Default: "sats", Required: true, Editable: true},
+				{Name: "PriceUnit", JSONKey: "price_unit", Type: "string", Description: "Price unit", Default: "sat", Required: true, Editable: true},
 				{Name: "MinPurchaseSteps", JSONKey: "purchase_min_steps", Type: "uint64", Description: "Minimum number of steps per purchase", Default: uint64(0), Required: true, Editable: true},
 			},
 		},
@@ -130,6 +138,7 @@ func GetConfigSchema() []FieldSchema {
 				{Name: "PostSwitchWaitSeconds", JSONKey: "post_switch_wait_seconds", Type: "int", Description: "Seconds to wait after a switch before scoring", Default: 5, Required: true, Editable: true, Min: 1, Max: 60},
 				{Name: "DHCPTimeoutSeconds", JSONKey: "dhcp_timeout_seconds", Type: "int", Description: "Timeout for DHCP after connecting to a network", Default: 180, Required: true, Editable: true, Min: 10, Max: 600},
 				{Name: "ManualPauseSeconds", JSONKey: "manual_pause_seconds", Type: "int", Description: "Seconds to pause scanning after manual intervention", Default: 120, Required: true, Editable: true, Min: 10, Max: 600},
+			{Name: "VendorIEDiscovery", JSONKey: "vendor_ie_discovery", Type: "bool", Description: "Enable 802.11 vendor-specific IE for TollGate router-to-router discovery", Default: false, Required: true, Editable: true},
 			},
 		},
 	}
