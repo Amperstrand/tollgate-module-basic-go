@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,12 +168,27 @@ func InitializeGlobalLogger(logLevel string) {
 }
 
 func init() {
+	// Load CA cert pool with fallback for OpenWrt where SystemCertPool may fail
+	caPool, err := x509.SystemCertPool()
+	if err != nil || caPool == nil || len(caPool.Subjects()) == 0 {
+		mainLogger.WithError(err).Warn("SystemCertPool unavailable, loading CA certs from /etc/ssl/certs/ca-certificates.crt")
+		caPool = x509.NewCertPool()
+		pemData, readErr := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
+		if readErr != nil {
+			mainLogger.WithError(readErr).Fatal("Failed to load CA certs from /etc/ssl/certs/ca-certificates.crt — install ca-certificates package")
+		}
+		if !caPool.AppendCertsFromPEM(pemData) {
+			mainLogger.Fatal("No valid CA certificates found in /etc/ssl/certs/ca-certificates.crt")
+		}
+		mainLogger.Infof("Loaded %d CA cert subjects from /etc/ssl/certs/ca-certificates.crt", len(caPool.Subjects()))
+	}
+
 	http.DefaultTransport = &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: 10 * time.Second,
 		}).DialContext,
 		DisableKeepAlives:     true,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12},
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS13, RootCAs: caPool},
 		TLSHandshakeTimeout:   20 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		MaxIdleConns:          10,
@@ -180,8 +196,6 @@ func init() {
 		ForceAttemptHTTP2:     false,
 	}
 	http.DefaultClient.Timeout = 30 * time.Second
-
-	var err error
 
 	configPath, installPath, identitiesPath := getTollgatePaths()
 

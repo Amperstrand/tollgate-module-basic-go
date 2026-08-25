@@ -1,19 +1,22 @@
 package merchant
 
 import (
-	"log"
+	"crypto/tls"
+	"crypto/x509"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	defaultRecoveryThreshold uint8 = 3
-	probeTimeout            = 30 * time.Second
-	probeInterval           = 5 * time.Minute
+	probeTimeout                   = 30 * time.Second
+	probeInterval                  = 5 * time.Minute
 
 	// Aggressive retry: when no mints are reachable at startup (e.g. WiFi STA
 	// not yet connected), probe every 15s with immediate recovery (threshold=1)
@@ -22,32 +25,91 @@ const (
 	aggressiveProbeInterval = 15 * time.Second
 	aggressiveProbeTimeout  = 10 * time.Second
 	aggressiveDuration      = 5 * time.Minute
+
+	// Initial probe retry: if all mints fail on the first attempt, retry up to
+	// 3 full rounds with a 5s delay between rounds. This handles slow DNS
+	// resolution or WiFi STA not-yet-connected scenarios on OpenWrt.
+	initialProbeMaxRetries = 3
+	initialProbeRetryDelay = 5 * time.Second
+
+	// CA cert bundle path on OpenWrt
+	caCertBundlePath = "/etc/ssl/certs/ca-certificates.crt"
 )
+
+// logger is the package-level logrus logger for mint health tracking.
+var logger = logrus.WithField("component", "mint_health_tracker")
+
+// loadCACertPool loads the system CA cert pool, falling back to an explicit
+// file load from /etc/ssl/certs/ca-certificates.crt on OpenWrt where
+// x509.SystemCertPool() may return nil or empty.
+func loadCACertPool() *x509.CertPool {
+	// Try system cert pool first
+	pool, err := x509.SystemCertPool()
+	if err == nil && pool != nil && len(pool.Subjects()) > 0 {
+		logger.Debugf("loadCACertPool: system cert pool loaded with %d subjects", len(pool.Subjects()))
+		return pool
+	}
+
+	logger.Warnf("loadCACertPool: system cert pool unavailable or empty (err=%v), falling back to %s", err, caCertBundlePath)
+
+	// Fallback: manually load from the OpenWrt CA bundle path
+	pool = x509.NewCertPool()
+	pemData, err := os.ReadFile(caCertBundlePath)
+	if err != nil {
+		logger.Fatalf("loadCACertPool: FATAL — cannot read CA certs from %s: %v. TLS will fail. Install ca-certificates package on OpenWrt.", caCertBundlePath, err)
+	}
+	if !pool.AppendCertsFromPEM(pemData) {
+		logger.Fatalf("loadCACertPool: FATAL — no valid CA certificates found in %s. TLS will fail.", caCertBundlePath)
+	}
+
+	logger.Infof("loadCACertPool: loaded %d CA cert subjects from %s", len(pool.Subjects()), caCertBundlePath)
+	return pool
+}
 
 type mintConfigProvider interface {
 	GetConfig() *config_manager.Config
 }
 
 type MintHealthTracker struct {
-	mu                   sync.RWMutex
-	reachableMints       map[string]bool
-	consecutiveSuccesses map[string]uint8
-	httpClient           *http.Client
-	configProvider       mintConfigProvider
-	recoveryThreshold    uint8
-	onFirstReachable     func()
-	hadReachableMint     bool
+	mu                    sync.RWMutex
+	reachableMints        map[string]bool
+	consecutiveSuccesses  map[string]uint8
+	httpClient            *http.Client
+	configProvider        mintConfigProvider
+	recoveryThreshold     uint8
+	onFirstReachable      func()
+	hadReachableMint      bool
 	onReachableSetChanged func()
-	reachableCount       int
-	stopCh               chan struct{}
+	reachableCount        int
+	stopCh                chan struct{}
 }
 
 func NewMintHealthTracker(configProvider mintConfigProvider) *MintHealthTracker {
+	// Build a TLS config that allows TLS 1.2 and 1.3, with explicit CA cert
+	// loading for OpenWrt compatibility.
+	caPool := loadCACertPool()
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		MaxVersion: tls.VersionTLS13,
+		RootCAs:    caPool,
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig:       tlsConfig,
+		TLSHandshakeTimeout:   20 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DisableKeepAlives:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		ForceAttemptHTTP2:     false,
+	}
+
 	return &MintHealthTracker{
 		reachableMints:       make(map[string]bool),
 		consecutiveSuccesses: make(map[string]uint8),
 		httpClient: &http.Client{
-			Timeout: probeTimeout,
+			Timeout:   probeTimeout,
+			Transport: transport,
 		},
 		configProvider:    configProvider,
 		recoveryThreshold: defaultRecoveryThreshold,
@@ -66,13 +128,24 @@ func (t *MintHealthTracker) StartProactiveChecks() {
 	t.mu.Unlock()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("StartProactiveChecks goroutine panicked: %v", r)
+			}
+		}()
+
 		var aggressiveDone chan struct{}
 		if needAggressive {
-			log.Printf("StartProactiveChecks: starting aggressive retry (no reachable mints at startup)")
+			logger.Infof("StartProactiveChecks: starting aggressive retry (no reachable mints at startup)")
 			aggressiveDone = t.runAggressiveRetry(stopCh)
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Errorf("StartProactiveChecks aggressive-done watcher panicked: %v", r)
+					}
+				}()
 				<-aggressiveDone
-				log.Printf("StartProactiveChecks: aggressive retry completed")
+				logger.Infof("StartProactiveChecks: aggressive retry completed")
 			}()
 		}
 
@@ -93,6 +166,11 @@ func (t *MintHealthTracker) StartProactiveChecks() {
 func (t *MintHealthTracker) runAggressiveRetry(stopCh chan struct{}) chan struct{} {
 	done := make(chan struct{})
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("runAggressiveRetry goroutine panicked: %v", r)
+			}
+		}()
 		defer close(done)
 		aggressiveClient := &http.Client{Timeout: aggressiveProbeTimeout}
 		ticker := time.NewTicker(aggressiveProbeInterval)
@@ -104,11 +182,11 @@ func (t *MintHealthTracker) runAggressiveRetry(stopCh chan struct{}) chan struct
 			select {
 			case <-ticker.C:
 				if t.runAggressiveCheck(aggressiveClient) {
-					log.Printf("runAggressiveRetry: mint became reachable, stopping aggressive mode")
+					logger.Infof("runAggressiveRetry: mint became reachable, stopping aggressive mode")
 					return
 				}
 			case <-timer.C:
-				log.Printf("runAggressiveRetry: aggressive period ended (%v), falling back to normal interval", aggressiveDuration)
+				logger.Infof("runAggressiveRetry: aggressive period ended (%v), falling back to normal interval", aggressiveDuration)
 				return
 			case <-stopCh:
 				return
@@ -193,9 +271,42 @@ func (t *MintHealthTracker) RunInitialProbe() {
 		return
 	}
 
-	log.Printf("RunInitialProbe: probing %d mint(s)", len(config.AcceptedMints))
-	results := make(map[string]bool, len(config.AcceptedMints))
-	for _, mint := range config.AcceptedMints {
+	mints := config.AcceptedMints
+	logger.Infof("RunInitialProbe: probing %d mint(s) with TLS config: min=%s max=%s", len(mints), "TLS 1.2", "TLS 1.3")
+
+	for round := 1; round <= initialProbeMaxRetries; round++ {
+		results := make(map[string]bool, len(mints))
+		for _, mint := range mints {
+			results[mint.URL] = t.probeMint(mint.URL)
+		}
+
+		// Check if any mint is reachable
+		anyReachable := false
+		for _, ok := range results {
+			if ok {
+				anyReachable = true
+				break
+			}
+		}
+
+		if anyReachable {
+			if round > 1 {
+				logger.Infof("RunInitialProbe: mints reachable on retry round %d/%d", round, initialProbeMaxRetries)
+			}
+			break
+		}
+
+		if round < initialProbeMaxRetries {
+			logger.Warnf("RunInitialProbe: all mints unreachable on round %d/%d, retrying in %v", round, initialProbeMaxRetries, initialProbeRetryDelay)
+			time.Sleep(initialProbeRetryDelay)
+		} else {
+			logger.Errorf("RunInitialProbe: all mints unreachable after %d retry rounds", initialProbeMaxRetries)
+		}
+	}
+
+	// Re-probe after retries to get final results
+	results := make(map[string]bool, len(mints))
+	for _, mint := range mints {
 		results[mint.URL] = t.probeMint(mint.URL)
 	}
 
@@ -213,7 +324,7 @@ func (t *MintHealthTracker) RunInitialProbe() {
 	}
 
 	t.reachableCount = 0
-	for _, mint := range config.AcceptedMints {
+	for _, mint := range mints {
 		if t.reachableMints[mint.URL] {
 			t.hadReachableMint = true
 			t.reachableCount++
@@ -226,12 +337,18 @@ func (t *MintHealthTracker) RunProactiveCheck() {
 }
 
 func (t *MintHealthTracker) runProactiveCheck() {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("runProactiveCheck panicked: %v", r)
+		}
+	}()
+
 	config := t.configProvider.GetConfig()
 	if config == nil {
 		return
 	}
 
-	log.Printf("runProactiveCheck: probing %d mint(s)", len(config.AcceptedMints))
+	logger.Infof("runProactiveCheck: probing %d mint(s)", len(config.AcceptedMints))
 	results := make(map[string]bool, len(config.AcceptedMints))
 	for _, mint := range config.AcceptedMints {
 		results[mint.URL] = t.probeMint(mint.URL)
@@ -281,7 +398,7 @@ func (t *MintHealthTracker) runProactiveCheck() {
 	t.mu.Unlock()
 
 	for _, cb := range callbacks {
-		log.Printf("runProactiveCheck: firing callback (hadReachable=%v, setChanged=%v)", t.hadReachableMint, setChanged)
+		logger.Infof("runProactiveCheck: firing callback (hadReachable=%v, setChanged=%v)", t.hadReachableMint, setChanged)
 		go cb()
 	}
 }
@@ -294,7 +411,7 @@ func (t *MintHealthTracker) runAggressiveCheck(aggressiveClient *http.Client) bo
 		return false
 	}
 
-	log.Printf("runAggressiveCheck: probing %d mint(s) with immediate recovery", len(config.AcceptedMints))
+	logger.Infof("runAggressiveCheck: probing %d mint(s) with immediate recovery", len(config.AcceptedMints))
 	results := make(map[string]bool, len(config.AcceptedMints))
 	for _, mint := range config.AcceptedMints {
 		results[mint.URL] = t.probeMintWith(mint.URL, aggressiveClient)
@@ -345,7 +462,7 @@ func (t *MintHealthTracker) runAggressiveCheck(aggressiveClient *http.Client) bo
 	t.mu.Unlock()
 
 	for _, cb := range callbacks {
-		log.Printf("runAggressiveCheck: firing callback (hadReachable=%v, setChanged=%v)", t.hadReachableMint, setChanged)
+		logger.Infof("runAggressiveCheck: firing callback (hadReachable=%v, setChanged=%v)", t.hadReachableMint, setChanged)
 		go cb()
 	}
 
@@ -363,12 +480,12 @@ func (t *MintHealthTracker) probeMintWith(mintURL string, client *http.Client) b
 	resp, err := client.Get(url)
 	elapsed := time.Since(start)
 	if err != nil {
-		log.Printf("mint probe FAILED: url=%s elapsed=%s error=%v", url, elapsed, err)
+		logger.Errorf("mint probe FAILED: url=%s elapsed=%s error=%v", url, elapsed, err)
 		return false
 	}
 	defer resp.Body.Close()
 
 	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
-	log.Printf("mint probe: url=%s status=%d elapsed=%s ok=%v", url, resp.StatusCode, elapsed, ok)
+	logger.Infof("mint probe: url=%s status=%d elapsed=%s ok=%v", url, resp.StatusCode, elapsed, ok)
 	return ok
 }
