@@ -25,6 +25,15 @@ and [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Build supply chain returned to the official gonuts-tollgate.**
+  Dropped the `felixfelix-bot/gonuts-tollgate` fork replace
+  directives from `src/go.mod` and `src/tollwallet/go.mod`; all four
+  go.mod files (root, tollwallet, cli, merchant) now pin
+  `OpenTollGate/gonuts-tollgate v0.11.1`, which also re-aligns the
+  `deps-and-imports` dependency-sync gate (red on main since #358
+  bumped only root and tollwallet).
+  ([#361](https://github.com/OpenTollGate/tollgate-module-basic-go/pull/361))
+
 - **Setup version bumped to v0.6.2.** Reinstall/upgrade now triggers a
   full setup rerun on already-deployed routers, installing the stub
   and portal instance alongside prior configuration. Existing
