@@ -466,6 +466,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          WORK="$(pwd)"
           PACKAGE_PATH=$(find /builder/bin/packages -name "*.apk" -type f | head -n1)
           if [ -z "$PACKAGE_PATH" ]; then
             echo "No .apk package found" >&2
@@ -473,11 +474,9 @@ jobs:
             exit 1
           fi
           ls -lh "$PACKAGE_PATH"
-          mkdir -p /github/workspace
-          cp "$PACKAGE_PATH" "/github/workspace/${PACKAGE_FILENAME}"
-          cd /github/workspace
+          cp "$PACKAGE_PATH" "$WORK/${PACKAGE_FILENAME}"
+          cd "$WORK"
           sha256sum "${PACKAGE_FILENAME}" | tee apk-manifest.txt
-          cat apk-manifest.txt
 
       - name: DRYRUN upload apk workflow artifact
         uses: actions/upload-artifact@v4
