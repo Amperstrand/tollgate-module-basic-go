@@ -205,54 +205,31 @@ jobs:
           chmod +x /usr/local/bin/nak
           nak --version
 
-      - name: Upload binaries to Blossom (per-arch, mirrored)
-        id: blossom-upload
-        env:
-          NSEC_HEX: ${{ secrets.NSEC_HEX }}
+      # DRYRUN BRANCH (pipeline verification for v0.6.0 — see #339):
+      # Blossom upload + Nostr publish are GATED. Binaries travel via
+      # workflow artifacts instead of blossom servers. Build steps are
+      # byte-identical to main; only artifact transport differs.
+      - name: DRYRUN tar per-arch binaries (blossom gated)
         run: |
           set -euo pipefail
-
-          blossom_upload() {
-            local file="$1"
-            local hash="" ok=0
-            for server in $BLOSSOM_SERVERS; do
-              local attempt=1 delay=2
-              while [ $attempt -le 3 ]; do
-                resp=$(nak blossom upload --server "$server" --sec "$NSEC_HEX" "$file" < /dev/null 2>&1) || true
-                srv_hash=$(printf '%s' "$resp" | jq -r '.sha256 // empty' 2>/dev/null || echo "")
-                if [ -n "$srv_hash" ] && [ "$srv_hash" != "null" ]; then
-                  ok=$((ok + 1))
-                  [ -z "$hash" ] && hash="$srv_hash"
-                  echo "  ok: ${server} -> ${srv_hash}" >&2
-                  break
-                fi
-                echo "  attempt $attempt to ${server} failed; retrying in ${delay}s..." >&2
-                echo "  nak output: $(printf '%s' "$resp" | tail -1)" >&2
-                sleep $delay
-                delay=$((delay * 2))
-                attempt=$((attempt + 1))
-              done
-            done
-            if [ "$ok" -lt "$BLOSSOM_MIN_SUCCESS" ]; then
-              echo "ERROR: only ${ok} mirrors succeeded for $(basename "$file") (need >= ${BLOSSOM_MIN_SUCCESS})" >&2
-              return 1
-            fi
-            echo "  ${ok}/$(echo $BLOSSOM_SERVERS | wc -w) mirrors ok" >&2
-            printf '%s' "$hash"
-          }
-
-          HASH_JSON="{}"
+          : > binaries-manifest.txt
           for key_dir in bin/*/; do
             key=$(basename "$key_dir")
             tar czf "binaries-${key}.tar.gz" -C "bin/$key" .
-            echo "Uploading binaries-${key}.tar.gz ($(stat -c%s "binaries-${key}.tar.gz") bytes)..."
-            hash=$(blossom_upload "binaries-${key}.tar.gz")
-            echo "  → $hash"
-            HASH_JSON=$(printf '%s' "$HASH_JSON" | jq -c --arg k "$key" --arg h "$hash" '. + {($k): $h}')
+            echo "binaries-${key}.tar.gz $(stat -c%s "binaries-${key}.tar.gz") bytes" >&2
+            sha256sum "binaries-${key}.tar.gz" | tee -a binaries-manifest.txt
           done
+          cat binaries-manifest.txt
 
-          echo "hashes=$HASH_JSON" >> $GITHUB_OUTPUT
-          echo "All uploads complete: $HASH_JSON"
+      - name: DRYRUN upload binaries as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-all
+          path: |
+            binaries-*.tar.gz
+            binaries-manifest.txt
+          retention-days: 3
+          if-no-files-found: error
 
   build-portal:
     # The publish pipeline (Blossom upload + Nostr publish) needs the NSEC_HEX
@@ -307,30 +284,16 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Download prebuilt binaries from Blossom
-        env:
-          HASHES_JSON: ${{ needs.compile-binaries.outputs.hashes }}
+      - name: DRYRUN download prebuilt binaries (artifact transport)
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-all
+
+      - name: Extract prebuilt binaries
         run: |
           set -euo pipefail
-          BINARIES_HASH=$(printf '%s' "$HASHES_JSON" | jq -r '."${{ matrix.compile_key }}"')
-          if [ -z "$BINARIES_HASH" ] || [ "$BINARIES_HASH" = "null" ]; then
-            echo "ERROR: no Blossom hash for compile_key=${{ matrix.compile_key }}" >&2
-            exit 1
-          fi
-          DOWNLOADED=false
-          for server in $BLOSSOM_SERVERS; do
-            if curl -fsSL -o binaries.tar.gz "${server}/${BINARIES_HASH}"; then
-              DOWNLOADED=true
-              echo "Downloaded from ${server}"
-              break
-            fi
-          done
-          if [ "$DOWNLOADED" != "true" ]; then
-            echo "ERROR: failed to download binaries from any mirror" >&2
-            exit 1
-          fi
           mkdir -p bin
-          tar xzf binaries.tar.gz -C bin
+          tar xzf "binaries-${{ matrix.compile_key }}.tar.gz" -C bin
           ls -lh bin/
 
       - name: Install UPX
@@ -394,70 +357,21 @@ jobs:
             DESCRIPTION="TollGate Basic Module for OpenWrt" \
             packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
 
-      - name: Install nak
-        run: |
-          curl -L "https://github.com/fiatjaf/nak/releases/download/v0.16.2/nak-v0.16.2-linux-amd64" -o /usr/local/bin/nak
-          chmod +x /usr/local/bin/nak
-
-      - name: Upload to Blossom and announce
-        env:
-          NSEC_HEX: ${{ secrets.NSEC_HEX }}
-          BUILD_ID: ${{ needs.determine-versioning.outputs.build_id }}
+      - name: DRYRUN hash and upload ipk artifact (blossom and nostr gated)
         run: |
           set -euo pipefail
+          ls -lh artifacts/
+          (cd artifacts && sha256sum ./*) | tee ipk-manifest-${{ matrix.architecture }}-${{ matrix.compression || 'none' }}.txt
 
-          PKG_FILE="artifacts/$PACKAGE_FILENAME"
-          PKG_HASH="" ok=0
-          OK_SERVERS=()
-          for server in $BLOSSOM_SERVERS; do
-            attempt=1; delay=2
-            while [ $attempt -le 3 ]; do
-              resp=$(nak blossom upload --server "$server" --sec "$NSEC_HEX" "$PKG_FILE" < /dev/null 2>&1) || true
-              srv_hash=$(printf '%s' "$resp" | jq -r '.sha256 // empty' 2>/dev/null || echo "")
-              if [ -n "$srv_hash" ] && [ "$srv_hash" != "null" ]; then
-                ok=$((ok + 1))
-                [ -z "$PKG_HASH" ] && PKG_HASH="$srv_hash"
-                OK_SERVERS+=("$server")
-                echo "  ok: ${server} -> ${srv_hash}" >&2
-                break
-              fi
-              echo "  attempt $attempt to ${server} failed; retrying in ${delay}s..." >&2
-              echo "  nak output: $(printf '%s' "$resp" | tail -1)" >&2
-              sleep $delay
-              delay=$((delay * 2))
-              attempt=$((attempt + 1))
-            done
-          done
-          if [ "$ok" -lt "$BLOSSOM_MIN_SUCCESS" ]; then
-            echo "ERROR: only ${ok} mirrors succeeded (need >= ${BLOSSOM_MIN_SUCCESS})" >&2
-            exit 1
-          fi
-          echo "  ${ok}/$(echo $BLOSSOM_SERVERS | wc -w) mirrors ok" >&2
-
-          PKG_URLS_JSON="[]"
-          for s in "${OK_SERVERS[@]}"; do
-            PKG_URLS_JSON=$(printf '%s' "$PKG_URLS_JSON" | jq -c --arg u "${s}/${PKG_HASH}.ipk" '. + [$u]')
-          done
-          compression_tag="${{ matrix.compression }}"
-          [ -z "$compression_tag" ] && compression_tag="none"
-
-          COORD_CONTENT=$(jq -cn \
-            --arg sha256 "$PKG_HASH" \
-            --arg filename "$PACKAGE_FILENAME" \
-            --argjson urls "$PKG_URLS_JSON" \
-            --arg arch "${{ matrix.architecture }}" \
-            --arg fmt "ipk" \
-            --arg compression "$compression_tag" \
-            '{sha256:$sha256, filename:$filename, urls:$urls, architecture:$arch, format:$fmt, compression:$compression}')
-
-          nak event --sec "$NSEC_HEX" -k 30078 \
-            --tag "d=tollgate-build/${BUILD_ID}/${{ matrix.architecture }}/ipk/${compression_tag}" \
-            --tag "r=${BUILD_ID}" \
-            --tag "t=tollgate-build" \
-            -c "$COORD_CONTENT" \
-            $COORDINATION_RELAYS < /dev/null
-
-          echo "Uploaded $PACKAGE_FILENAME → $PKG_HASH"
+      - name: DRYRUN upload ipk workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dryrun-ipk-${{ matrix.architecture }}-${{ matrix.compression || 'none' }}
+          path: |
+            artifacts/
+            ipk-manifest-${{ matrix.architecture }}-${{ matrix.compression || 'none' }}.txt
+          retention-days: 3
+          if-no-files-found: error
 
   package-apk:
     needs: [define-package-matrix, determine-versioning, compile-binaries, build-portal]
@@ -479,37 +393,17 @@ jobs:
           apt-get update
           apt-get install -y curl jq
 
-      - name: Install nak
-        run: |
-          curl -L "https://github.com/fiatjaf/nak/releases/download/v0.16.2/nak-v0.16.2-linux-amd64" -o /usr/local/bin/nak
-          chmod +x /usr/local/bin/nak
-          nak --version
+      - name: DRYRUN download prebuilt binaries (artifact transport)
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-all
 
-      - name: Download prebuilt binaries from Blossom
+      - name: DRYRUN extract prebuilt binaries
         shell: bash
-        env:
-          HASHES_JSON: ${{ needs.compile-binaries.outputs.hashes }}
         run: |
           set -euo pipefail
-          BINARIES_HASH=$(printf '%s' "$HASHES_JSON" | jq -r '."${{ matrix.compile_key }}"')
-          if [ -z "$BINARIES_HASH" ] || [ "$BINARIES_HASH" = "null" ]; then
-            echo "ERROR: no Blossom hash for compile_key=${{ matrix.compile_key }}" >&2
-            exit 1
-          fi
-          DOWNLOADED=false
-          for server in $BLOSSOM_SERVERS; do
-            if curl -fsSL -o binaries.tar.gz "${server}/${BINARIES_HASH}"; then
-              DOWNLOADED=true
-              echo "Downloaded from ${server}"
-              break
-            fi
-          done
-          if [ "$DOWNLOADED" != "true" ]; then
-            echo "ERROR: failed to download binaries from any mirror" >&2
-            exit 1
-          fi
           mkdir -p bin
-          tar xzf binaries.tar.gz -C bin
+          tar xzf "binaries-${{ matrix.compile_key }}.tar.gz" -C bin
           ls -lh bin/
 
       - name: Install UPX
@@ -568,11 +462,8 @@ jobs:
             UPX_FLAGS="$UPX_FLAGS" \
             make -j$(nproc) ${{ env.DEBUG == 'true' && 'V=sc' || '' }} package/${PACKAGE_NAME}/compile
 
-      - name: Collect, upload to Blossom, and announce
+      - name: DRYRUN collect and hash apk (blossom and nostr gated)
         shell: bash
-        env:
-          NSEC_HEX: ${{ secrets.NSEC_HEX }}
-          BUILD_ID: ${{ needs.determine-versioning.outputs.build_id }}
         run: |
           set -euo pipefail
           PACKAGE_PATH=$(find /builder/bin/packages -name "*.apk" -type f | head -n1)
@@ -584,62 +475,23 @@ jobs:
           ls -lh "$PACKAGE_PATH"
           mkdir -p /github/workspace
           cp "$PACKAGE_PATH" "/github/workspace/${PACKAGE_FILENAME}"
+          cd /github/workspace
+          sha256sum "${PACKAGE_FILENAME}" | tee apk-manifest.txt
+          cat apk-manifest.txt
 
-          PKG_FILE="/github/workspace/${PACKAGE_FILENAME}"
-          PKG_HASH="" ok=0
-          OK_SERVERS=()
-          for server in $BLOSSOM_SERVERS; do
-            attempt=1; delay=2
-            while [ $attempt -le 3 ]; do
-              resp=$(nak blossom upload --server "$server" --sec "$NSEC_HEX" "$PKG_FILE" < /dev/null 2>&1) || true
-              srv_hash=$(printf '%s' "$resp" | jq -r '.sha256 // empty' 2>/dev/null || echo "")
-              if [ -n "$srv_hash" ] && [ "$srv_hash" != "null" ]; then
-                ok=$((ok + 1))
-                [ -z "$PKG_HASH" ] && PKG_HASH="$srv_hash"
-                OK_SERVERS+=("$server")
-                echo "  ok: ${server} -> ${srv_hash}" >&2
-                break
-              fi
-              echo "  attempt $attempt to ${server} failed; retrying in ${delay}s..." >&2
-              echo "  nak output: $(printf '%s' "$resp" | tail -1)" >&2
-              sleep $delay
-              delay=$((delay * 2))
-              attempt=$((attempt + 1))
-            done
-          done
-          if [ "$ok" -lt "$BLOSSOM_MIN_SUCCESS" ]; then
-            echo "ERROR: only ${ok} mirrors succeeded (need >= ${BLOSSOM_MIN_SUCCESS})" >&2
-            exit 1
-          fi
-          echo "  ${ok}/$(echo $BLOSSOM_SERVERS | wc -w) mirrors ok" >&2
-
-          PKG_URLS_JSON="[]"
-          for s in "${OK_SERVERS[@]}"; do
-            PKG_URLS_JSON=$(printf '%s' "$PKG_URLS_JSON" | jq -c --arg u "${s}/${PKG_HASH}.apk" '. + [$u]')
-          done
-          compression_tag="${{ matrix.compression }}"
-          [ -z "$compression_tag" ] && compression_tag="none"
-
-          COORD_CONTENT=$(jq -cn \
-            --arg sha256 "$PKG_HASH" \
-            --arg filename "$PACKAGE_FILENAME" \
-            --argjson urls "$PKG_URLS_JSON" \
-            --arg arch "${{ matrix.architecture }}" \
-            --arg fmt "apk" \
-            --arg compression "$compression_tag" \
-            '{sha256:$sha256, filename:$filename, urls:$urls, architecture:$arch, format:$fmt, compression:$compression}')
-
-          nak event --sec "$NSEC_HEX" -k 30078 \
-            --tag "d=tollgate-build/${BUILD_ID}/${{ matrix.architecture }}/apk/${compression_tag}" \
-            --tag "r=${BUILD_ID}" \
-            --tag "t=tollgate-build" \
-            -c "$COORD_CONTENT" \
-            $COORDINATION_RELAYS < /dev/null
-
-          echo "Uploaded $PACKAGE_FILENAME → $PKG_HASH"
+      - name: DRYRUN upload apk workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dryrun-apk-${{ matrix.architecture }}-${{ matrix.compression || 'none' }}
+          path: |
+            ${{ env.PACKAGE_FILENAME }}
+            apk-manifest.txt
+          retention-days: 3
+          if-no-files-found: error
 
   publish-metadata:
     needs: [determine-versioning, package-ipk, package-apk]
+    if: false # DRYRUN BRANCH — Nostr publish must never run outside upstream
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
