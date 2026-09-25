@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -70,14 +69,6 @@ func GetInvoiceFromLightningAddress(lightningAddr string, amountSats uint64) (st
 		return "", fmt.Errorf("invalid callback URL: %w", err)
 	}
 
-	if host := callbackURL.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-				return "", fmt.Errorf("callback URL points to blocked address: %s", host)
-			}
-		}
-	}
-
 	// Add amount parameter
 	q := callbackURL.Query()
 	q.Set("amount", strconv.FormatInt(amountMsat, 10))
@@ -107,19 +98,4 @@ func GetInvoiceFromLightningAddress(lightningAddr string, amountSats uint64) (st
 	}
 
 	return invoice.PR, nil
-}
-
-func validateCallbackURL(callbackURL *url.URL) error {
-	host := callbackURL.Hostname()
-	if host == "" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil
-	}
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-		return fmt.Errorf("callback URL points to blocked address: %s", host)
-	}
-	return nil
 }
