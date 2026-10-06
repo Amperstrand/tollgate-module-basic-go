@@ -1,12 +1,58 @@
 name: gitleaks
 
+# Local secret-scan backstop (replaces the org reusable workflow that has
+# been failing with zero output since 2026-10-05 — issue #106 item 1).
+#
+# Division of labor with hooks/pre-commit (gitleaks protect --staged):
+# the hook is prevention where removal is cheap; this is the backstop for
+# bypasses (--no-verify), unhooked machines, and agent-run commits.
+#   pull_request  -> new commits only (fast, always relevant)
+#   push to main  -> the pushed range (direct pushes skip PR scanning)
+#   weekly        -> full history (catches rule updates + old smuggles)
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
   schedule:
-    - cron: "13 6 * * *"
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gitleaks:
-    uses: Amperstrand/.github/.github/workflows/gitleaks.yml@main
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        run: |
+          set -euo pipefail
+          VERSION="8.30.1"
+          curl -sSfL --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+          CONFIG=""
+          [ -f .gitleaks.toml ] && CONFIG="--config .gitleaks.toml"
+          RANGE=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BASE="${{ github.event.before }}"
+          fi
+          if [ -n "${BASE:-}" ] && git cat-file -e "$BASE" 2>/dev/null; then
+            RANGE="$BASE..HEAD"
+            echo "scanning new commits only: $RANGE"
+            gitleaks git . --redact --verbose $CONFIG --log-opts="$RANGE"
+          else
+            echo "no resolvable base — scanning full history"
+            gitleaks git . --redact --verbose $CONFIG
+          fi
