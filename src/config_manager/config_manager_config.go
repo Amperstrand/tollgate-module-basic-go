@@ -71,11 +71,17 @@ func (m *MintConfig) UnmarshalJSON(data []byte) error {
 	}
 	*m = MintConfig(alias)
 	if m.MinPurchaseSteps == 0 {
-		var legacy struct {
-			MinPurchaseStepsLegacy uint64 `json:"min_purchase_steps"`
-		}
-		if err := json.Unmarshal(data, &legacy); err == nil && legacy.MinPurchaseStepsLegacy > 0 {
-			m.MinPurchaseSteps = legacy.MinPurchaseStepsLegacy
+		// Legacy key from early FreedomTechFeed package configs. Parsed via
+		// a raw map (not a struct json tag) so the schema lint sees exactly
+		// one tag per field.
+		var legacy map[string]json.RawMessage
+		if err := json.Unmarshal(data, &legacy); err == nil {
+			if raw, ok := legacy["min_purchase_steps"]; ok {
+				var v uint64
+				if json.Unmarshal(raw, &v) == nil && v > 0 {
+					m.MinPurchaseSteps = v
+				}
+			}
 		}
 	}
 	if m.MinPurchaseSteps == 0 {

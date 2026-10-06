@@ -1,6 +1,6 @@
 module github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager
 
-go 1.25.0
+go 1.26.0
 
 require github.com/nbd-wtf/go-nostr v0.51.12
 
@@ -21,6 +21,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
