@@ -136,6 +136,14 @@ type UpstreamDetectorConfig struct {
 	IgnoreInterfaces []string `json:"ignore_interfaces"`
 	OnlyInterfaces   []string `json:"only_interfaces"`
 
+	// ProbeBridges lets a bridge act as the wired upstream path for devices
+	// whose only link is bridged (e.g. a single-port Raspberry Pi test router
+	// with eth0 enslaved to br-lan). Opt-in: bridges remain LAN fabric by
+	// default. Bridge gateway resolution uses real default routes only —
+	// never IP inference, which is what fabricated the phantom .254 probes.
+	// The bridge must also be removed from ignore_interfaces.
+	ProbeBridges bool `json:"probe_bridges"`
+
 	// Discovery deduplication
 	DiscoveryTimeout time.Duration `json:"discovery_timeout"`
 }

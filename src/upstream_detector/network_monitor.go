@@ -323,8 +323,23 @@ func (nm *networkMonitor) getGatewayForInterface(interfaceName string) string {
 	// A bridge is our own LAN fabric, never an upstream link. Reporting a
 	// gateway for it is what produced the phantom 10.60.32.254 probe on
 	// br-private: no default route, so inference fabricated the .254 host.
+	// Exception: probe_bridges opts a single-port bridged device (e.g. a Pi
+	// test router whose only link is br-lan) into wired upstream detection.
+	// Opt-in bridges resolve their gateway from REAL default routes only —
+	// the inference fallback stays forbidden for bridges, so an opted-in
+	// bridge without a default route yields no gateway, not a phantom one.
 	if isLANFabricLink(link) {
-		logger.WithField("interface", interfaceName).Debug("Skipping LAN fabric interface (bridge/loopback) for upstream gateway detection")
+		if !(link.Type() == "bridge" && nm.config != nil && nm.config.ProbeBridges) {
+			logger.WithField("interface", interfaceName).Debug("Skipping LAN fabric interface (bridge/loopback) for upstream gateway detection")
+			return ""
+		}
+		if gw := nm.getGatewayFromRoutes(link); gw != "" {
+			return gw
+		}
+		if gw := nm.getGatewayFromGlobalRoutes(link); gw != "" {
+			return gw
+		}
+		logger.WithField("interface", interfaceName).Debug("Bridge probe opt-in: no default route on bridge")
 		return ""
 	}
 

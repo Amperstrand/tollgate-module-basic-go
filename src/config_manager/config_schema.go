@@ -97,6 +97,7 @@ func GetConfigSchema() []FieldSchema {
 				{Name: "RequireValidSignature", JSONKey: "require_valid_signature", Type: "bool", Description: "Require valid NIP-70 signature", Default: true, Required: true, Editable: true},
 				{Name: "IgnoreInterfaces", JSONKey: "ignore_interfaces", Type: "array", Description: "Interfaces to ignore", Default: []string{"lo", "docker0", "br-lan", "hostap0"}, Required: false, Editable: true, Children: []FieldSchema{{Type: "string"}}},
 				{Name: "OnlyInterfaces", JSONKey: "only_interfaces", Type: "array", Description: "Only probe these interfaces (empty = all)", Default: []string{}, Required: false, Editable: true, Children: []FieldSchema{{Type: "string"}}},
+				{Name: "ProbeBridges", JSONKey: "probe_bridges", Type: "bool", Description: "Let a bridge carry the wired upstream path (single-port bridged devices, e.g. a Pi test router with eth0 in br-lan). Routes-only gateway resolution; also remove the bridge from ignore_interfaces", Default: false, Required: true, Editable: true},
 				{Name: "DiscoveryTimeout", JSONKey: "discovery_timeout", Type: "duration", Description: "Deduplication window", Default: "5m0s", Required: true, Editable: true},
 			},
 		},

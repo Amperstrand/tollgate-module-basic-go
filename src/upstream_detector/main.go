@@ -304,8 +304,10 @@ func (ud *upstreamDetector) reportGatewaysForInterfaces() {
 		return
 	}
 
+	probeBridges := ud.config != nil && ud.config.ProbeBridges
 	for _, iface := range interfaces {
-		if !iface.IsUpstreamGatewayCandidate() {
+		if !iface.IsUpstreamGatewayCandidate() &&
+			!iface.IsBridgeProbeCandidate(probeBridges) {
 			continue
 		}
 

@@ -4,6 +4,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/OpenTollGate/tollgate-module-basic-go/src/config_manager"
 	"github.com/OpenTollGate/tollgate-module-basic-go/src/upstream_session_manager"
 	"github.com/vishvananda/netlink"
 )
@@ -156,6 +157,74 @@ func TestScanSkipsBridgeGateways(t *testing.T) {
 	ud.reportGatewaysForInterfaces()
 
 	want := []string{"phy1-sta0|192.168.2.1"}
+	if len(usm.reported) != len(want) || usm.reported[0] != want[0] {
+		t.Fatalf("reported %v, want %v", usm.reported, want)
+	}
+}
+
+func TestIsBridgeProbeCandidate(t *testing.T) {
+	cases := []struct {
+		name         string
+		iface        *InterfaceInfo
+		probeBridges bool
+		want         bool
+	}{
+		{
+			name:         "opted-in up bridge with addresses is a candidate",
+			iface:        &InterfaceInfo{Name: "br-lan", IsUp: true, IsBridge: true, IPAddresses: []string{"192.168.1.240"}},
+			probeBridges: true,
+			want:         true,
+		},
+		{
+			name:         "bridge without opt-in stays fabric",
+			iface:        &InterfaceInfo{Name: "br-lan", IsUp: true, IsBridge: true, IPAddresses: []string{"192.168.1.1"}},
+			probeBridges: false,
+			want:         false,
+		},
+		{
+			name:         "opt-in does not make physical ports bridge candidates",
+			iface:        &InterfaceInfo{Name: "eth0", IsUp: true, IPAddresses: []string{"192.168.1.2"}},
+			probeBridges: true,
+			want:         false,
+		},
+		{
+			name:         "down bridge is never a candidate",
+			iface:        &InterfaceInfo{Name: "br-lan", IsBridge: true, IPAddresses: []string{"192.168.1.1"}},
+			probeBridges: true,
+			want:         false,
+		},
+	}
+	for _, tc := range cases {
+		if got := tc.iface.IsBridgeProbeCandidate(tc.probeBridges); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestScanProbesBridgeWhenOptedIn covers the single-port bridged device
+// (e.g. a Raspberry Pi test router whose only link is br-lan): with
+// probe_bridges set, the bridge's gateway is reported like any wired
+// upstream. The gateway itself comes from real routes — the monitor
+// contract for opted-in bridges — so the fakeMonitor's map entry here
+// stands in for a route-backed resolution.
+func TestScanProbesBridgeWhenOptedIn(t *testing.T) {
+	mon := &fakeMonitor{
+		ifaces: []*InterfaceInfo{
+			{Name: "br-lan", IsUp: true, IsBridge: true, MacAddress: "e4:5f:01:12:34:56", IPAddresses: []string{"192.168.1.240"}},
+			{Name: "br-private", IsUp: true, IsBridge: true, IPAddresses: []string{"10.60.32.1"}},
+		},
+		gws: map[string]string{
+			"br-lan":     "192.168.1.221",
+			"br-private": "",
+		},
+	}
+	usm := &recordingUSM{}
+	ud := &upstreamDetector{networkMonitor: mon, config: &config_manager.UpstreamDetectorConfig{ProbeBridges: true}}
+	ud.SetUpstreamSessionManager(usm)
+
+	ud.reportGatewaysForInterfaces()
+
+	want := []string{"br-lan|192.168.1.221"}
 	if len(usm.reported) != len(want) || usm.reported[0] != want[0] {
 		t.Fatalf("reported %v, want %v", usm.reported, want)
 	}

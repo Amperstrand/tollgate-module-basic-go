@@ -53,3 +53,15 @@ func (i *InterfaceInfo) IsUpstreamGatewayCandidate() bool {
 	}
 	return len(i.IPAddresses) > 0
 }
+
+// IsBridgeProbeCandidate reports whether this bridge may be probed as the
+// wired upstream path despite being LAN fabric: only when the operator
+// opted in via upstream_detector.probe_bridges (single-port bridged
+// devices, e.g. a Raspberry Pi test router whose only link is br-lan).
+// Route-backed gateway resolution only — see getGatewayForInterface.
+func (i *InterfaceInfo) IsBridgeProbeCandidate(probeBridges bool) bool {
+	if i == nil || !probeBridges || !i.IsBridge || !i.IsUp || i.IsLoopback {
+		return false
+	}
+	return len(i.IPAddresses) > 0
+}
